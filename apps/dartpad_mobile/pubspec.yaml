@@ -1,0 +1,21 @@
+name: dartpad_mobile
+description: Customizable Android Virtual Gamepad Controller for Windows PC (Wi-Fi & USB).
+version: 0.1.0+1
+publish_to: none
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dartpad_protocol:
+    path: ../../packages/dartpad_protocol
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

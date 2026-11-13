@@ -1,0 +1,146 @@
+name: DartPad CI & Release
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test-protocol-and-receiver:
+    name: Analyze & Test (Protocol + Receiver)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Dart SDK
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Analyze code
+        run: dart analyze packages/dartpad_protocol apps/dartpad_receiver
+
+      - name: Run unit & integration tests
+        run: dart test packages/dartpad_protocol apps/dartpad_receiver
+
+      - name: Run Receiver Self-Test
+        run: dart run apps/dartpad_receiver/bin/dartpad_receiver.dart --self-test
+
+  build-windows:
+    name: Build Windows Receiver (.exe + .dll)
+    needs: test-protocol-and-receiver
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Dart SDK
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Build Native Virtual Gamepad Bridge (dartpad_vgamepad.dll)
+        run: |
+          cmake -S native/dartpad_vgamepad -B build/native
+          cmake --build build/native --config Release
+
+      - name: Compile dartpad_receiver.exe
+        run: |
+          mkdir dist-windows
+          dart compile exe apps/dartpad_receiver/bin/dartpad_receiver.dart -o dist-windows/dartpad_receiver.exe
+          copy build\native\Release\dartpad_vgamepad.dll dist-windows\dartpad_vgamepad.dll
+
+      - name: Verify dartpad_receiver.exe --self-test on Windows
+        run: .\dist-windows\dartpad_receiver.exe --self-test
+
+      - name: Package Windows Release Zip
+        run: |
+          Compress-Archive -Path dist-windows\* -DestinationPath dartpad-windows-x64.zip
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dartpad-windows-x64
+          path: |
+            dist-windows/dartpad_receiver.exe
+            dist-windows/dartpad_vgamepad.dll
+            dartpad-windows-x64.zip
+
+  build-android:
+    name: Build Android Controller (.apk)
+    needs: test-protocol-and-receiver
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Generate Android platform runner if missing & Build APK
+        working-directory: apps/dartpad_mobile
+        run: |
+          if [ ! -d "android" ]; then
+            flutter create --platforms=android --org com.ferdlcx.dartpad --project-name dartpad_mobile .
+          fi
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload Android APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dartpad-android-apk
+          path: apps/dartpad_mobile/build/app/outputs/flutter-apk/app-release.apk
+
+  create-github-release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-windows, build-android]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dartpad-windows-x64
+          path: release-assets
+
+      - name: Download Android APK Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dartpad-android-apk
+          path: release-assets
+
+      - name: Rename APK for Release
+        run: mv release-assets/app-release.apk release-assets/dartpad-mobile-android.apk
+
+      - name: Create GitHub Release & Attach Binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release-assets/dartpad-windows-x64.zip
+            release-assets/dartpad_receiver.exe
+            release-assets/dartpad_vgamepad.dll
+            release-assets/dartpad-mobile-android.apk
