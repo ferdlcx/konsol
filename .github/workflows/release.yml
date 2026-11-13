@@ -116,7 +116,7 @@ jobs:
 
   create-github-release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: [build-windows, build-android]
     runs-on: ubuntu-latest
     steps:
@@ -138,9 +138,11 @@ jobs:
       - name: Create GitHub Release & Attach Binaries
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v0.1.0
+          name: "DartPad v0.1.0 — Android Controller (.apk) & Windows Receiver (.exe)"
           generate_release_notes: true
           files: |
             release-assets/dartpad-windows-x64.zip
-            release-assets/dartpad_receiver.exe
-            release-assets/dartpad_vgamepad.dll
+            release-assets/dist-windows/dartpad_receiver.exe
+            release-assets/dist-windows/dartpad_vgamepad.dll
             release-assets/dartpad-mobile-android.apk
