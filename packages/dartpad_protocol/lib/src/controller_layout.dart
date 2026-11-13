@@ -10,11 +10,20 @@ enum LayoutElementType {
   rightJoystick;
 }
 
+/// Execution mode for a Combo / Macro button:
+/// - [simultaneous]: Presses all buttons in `actions` at the exact same instant.
+/// - [sequence]: Presses each button in `actions` one after another (e.g. `X -> Y -> A -> A`)
+///   with a configurable millisecond interval ([stepDelayMs]).
+enum ComboExecutionMode {
+  simultaneous,
+  sequence;
+}
+
 /// Customizable placement, size, appearance, and action binding for a single
 /// element on the controller layout canvas.
 ///
 /// Coordinates ([x], [y]) are stored as normalized screen percentages (`0.0 .. 1.0`)
-/// so the layout adapts cleanly across different phone screen resolutions.
+/// so the layout adapts cleanly across different phone screen resolutions without overlapping.
 class ButtonLayoutItem {
   final String id;
   final String label;
@@ -29,19 +38,26 @@ class ButtonLayoutItem {
   /// Scale multiplier (`0.5` = 50% size, `1.0` = 100% default, `2.5` = 250% size).
   final double scale;
 
-  /// Opacity (`0.1` .. `1.0`, default `0.85`).
+  /// Opacity (`0.1` .. `1.0`, default `0.90`).
   final double opacity;
 
   /// Whether this button/element is visible and active on the controller screen.
   final bool visible;
 
-  /// Optional ARGB hex color override (e.g., `0xFF00E5FF`).
+  /// Optional ARGB hex color override (e.g., `0xFF107C10`).
   final int? colorHex;
 
-  /// One or more [GamepadButton]s triggered simultaneously when this element is pressed.
-  /// - For `singleButton`: contains 1 button (e.g. `[GamepadButton.south]`).
-  /// - For `comboButton`: contains 2+ buttons pressed together (e.g. `[GamepadButton.leftShoulder, GamepadButton.rightShoulder]` or `[GamepadButton.south, GamepadButton.east]`).
+  /// Ordered list of [GamepadButton]s triggered by this element.
+  /// Can contain duplicate buttons in order for sequence macros, e.g.:
+  /// `[GamepadButton.west, GamepadButton.north, GamepadButton.south, GamepadButton.south]` (`X, Y, A, A`).
   final List<GamepadButton> actions;
+
+  /// Whether this combo executes all buttons simultaneously or sequentially in milliseconds.
+  final ComboExecutionMode comboMode;
+
+  /// Delay in milliseconds between each step when [comboMode] is [ComboExecutionMode.sequence].
+  /// Default is `75` ms per button step.
+  final int stepDelayMs;
 
   const ButtonLayoutItem({
     required this.id,
@@ -50,13 +66,26 @@ class ButtonLayoutItem {
     required this.x,
     required this.y,
     this.scale = 1.0,
-    this.opacity = 0.85,
+    this.opacity = 0.90,
     this.visible = true,
     this.colorHex,
     this.actions = const [],
+    this.comboMode = ComboExecutionMode.simultaneous,
+    this.stepDelayMs = 75,
   });
 
-  bool get isCombo => type == LayoutElementType.comboButton || actions.length > 1;
+  bool get isCombo =>
+      type == LayoutElementType.comboButton || actions.length > 1;
+
+  /// Returns a human-readable summary of the combo sequence (e.g. `X → Y → A → A (75ms)` or `LB + RB`).
+  String describeCombo(ControllerType preset) {
+    if (actions.isEmpty) return label;
+    final names = actions.map((b) => preset.labelFor(b)).toList();
+    if (comboMode == ComboExecutionMode.sequence) {
+      return '${names.join("→")} (${stepDelayMs}ms)';
+    }
+    return names.join('+');
+  }
 
   /// Returns a new [ButtonLayoutItem] with updated position/size/combo properties.
   ButtonLayoutItem copyWith({
@@ -70,23 +99,26 @@ class ButtonLayoutItem {
     bool? visible,
     int? colorHex,
     List<GamepadButton>? actions,
+    ComboExecutionMode? comboMode,
+    int? stepDelayMs,
   }) {
     return ButtonLayoutItem(
       id: id ?? this.id,
       label: label ?? this.label,
       type: type ?? this.type,
-      x: (x ?? this.x).clamp(0.0, 1.0),
-      y: (y ?? this.y).clamp(0.0, 1.0),
-      scale: (scale ?? this.scale).clamp(0.4, 3.0),
-      opacity: (opacity ?? this.opacity).clamp(0.1, 1.0),
+      x: (x ?? this.x).clamp(0.04, 0.96),
+      y: (y ?? this.y).clamp(0.06, 0.94),
+      scale: (scale ?? this.scale).clamp(0.4, 2.5),
+      opacity: (opacity ?? this.opacity).clamp(0.15, 1.0),
       visible: visible ?? this.visible,
       colorHex: colorHex ?? this.colorHex,
       actions: actions ?? this.actions,
+      comboMode: comboMode ?? this.comboMode,
+      stepDelayMs: (stepDelayMs ?? this.stepDelayMs).clamp(0, 2000),
     );
   }
 
-  /// Applies this element's [actions] (single or multi-button combo) onto [current] state.
-  /// Also updates analog `leftTrigger` / `rightTrigger` values if `LT` / `RT` are part of the combo.
+  /// Applies this element's [actions] onto [current] state when in simultaneous mode.
   ControllerState applyToState({
     required ControllerState current,
     required bool isPressed,
@@ -128,6 +160,8 @@ class ButtonLayoutItem {
         'visible': visible,
         if (colorHex != null) 'colorHex': colorHex,
         'actions': actions.map((a) => a.name).toList(),
+        'comboMode': comboMode.name,
+        'stepDelayMs': stepDelayMs,
       };
 
   factory ButtonLayoutItem.fromJson(Map<String, dynamic> json) {
@@ -135,6 +169,12 @@ class ButtonLayoutItem {
     final type = LayoutElementType.values.firstWhere(
       (t) => t.name == typeName,
       orElse: () => LayoutElementType.singleButton,
+    );
+
+    final modeName = json['comboMode'] as String? ?? 'simultaneous';
+    final comboMode = ComboExecutionMode.values.firstWhere(
+      (m) => m.name == modeName,
+      orElse: () => ComboExecutionMode.simultaneous,
     );
 
     final rawActions = (json['actions'] as List<dynamic>?) ?? const [];
@@ -152,18 +192,21 @@ class ButtonLayoutItem {
       id: json['id'] as String? ?? 'btn_custom',
       label: json['label'] as String? ?? 'BTN',
       type: type,
-      x: ((json['x'] as num?)?.toDouble() ?? 0.5).clamp(0.0, 1.0),
-      y: ((json['y'] as num?)?.toDouble() ?? 0.5).clamp(0.0, 1.0),
-      scale: ((json['scale'] as num?)?.toDouble() ?? 1.0).clamp(0.4, 3.0),
-      opacity: ((json['opacity'] as num?)?.toDouble() ?? 0.85).clamp(0.1, 1.0),
+      x: ((json['x'] as num?)?.toDouble() ?? 0.5).clamp(0.04, 0.96),
+      y: ((json['y'] as num?)?.toDouble() ?? 0.5).clamp(0.06, 0.94),
+      scale: ((json['scale'] as num?)?.toDouble() ?? 1.0).clamp(0.4, 2.5),
+      opacity: ((json['opacity'] as num?)?.toDouble() ?? 0.90).clamp(0.15, 1.0),
       visible: json['visible'] as bool? ?? true,
       colorHex: json['colorHex'] as int?,
       actions: parsedActions,
+      comboMode: comboMode,
+      stepDelayMs: ((json['stepDelayMs'] as num?)?.toInt() ?? 75).clamp(0, 2000),
     );
   }
 }
 
-/// Complete customizable controller layout containing standard controls and custom combo buttons.
+/// Complete customizable controller layout modelled after an authentic Xbox Series
+/// Controller layout with zero overlapping elements and built-in `(1)` / `(2)` Combo buttons.
 class ControllerLayout {
   final String id;
   final String name;
@@ -175,41 +218,42 @@ class ControllerLayout {
     required this.items,
   });
 
-  /// Default landscape layout with standard controls + support for adding custom combo buttons.
+  /// Authentic Xbox Asymmetric Landscape Layout (Anti-Overlap):
+  /// - Upper-Left: Left Stick (`LS`)
+  /// - Lower-Left Inner: 4-Way Cross `D-Pad`
+  /// - Upper-Right: Diamond `Y / X / B / A` with authentic Xbox color accents
+  /// - Lower-Right Inner: Right Stick (`RS`)
+  /// - Top Bumpers: `LT` & `LB` (Left), `RB` & `RT` (Right)
+  /// - Center System Row: `View`, `Xbox`, `Menu`
+  /// - Center-Bottom Macro Row: Pre-configured Combo `(1)` (`X → Y → A → A`, 75ms sequence)
+  ///   and Combo `(2)` (`LB + RB` instant).
   factory ControllerLayout.defaultLandscape({
     ControllerType preset = ControllerType.xbox,
   }) {
     String lbl(GamepadButton b) => preset.labelFor(b);
 
     return ControllerLayout(
-      id: 'landscape_default',
-      name: 'Default Landscape',
+      id: 'xbox_authentic_landscape',
+      name: 'Xbox Authentic Layout',
       items: [
-        // Joysticks & D-Pad
+        // 1. Left Analog Stick (Upper-Left, authentic Xbox asymmetric position)
         const ButtonLayoutItem(
           id: 'left_stick',
           label: 'LS',
           type: LayoutElementType.leftJoystick,
-          x: 0.18,
-          y: 0.68,
+          x: 0.16,
+          y: 0.45,
           scale: 1.0,
           actions: [GamepadButton.leftStick],
         ),
-        const ButtonLayoutItem(
-          id: 'right_stick',
-          label: 'RS',
-          type: LayoutElementType.rightJoystick,
-          x: 0.68,
-          y: 0.68,
-          scale: 1.0,
-          actions: [GamepadButton.rightStick],
-        ),
+
+        // 2. D-Pad Cross (Lower-Left Inner, well separated from LS)
         const ButtonLayoutItem(
           id: 'dpad',
           label: 'D-Pad',
           type: LayoutElementType.dpad,
-          x: 0.28,
-          y: 0.42,
+          x: 0.32,
+          y: 0.76,
           scale: 1.0,
           actions: [
             GamepadButton.dpadUp,
@@ -218,14 +262,27 @@ class ControllerLayout {
             GamepadButton.dpadRight,
           ],
         ),
-        // Shoulders & Triggers
+
+        // 3. Right Analog Stick (Lower-Right Inner, well separated from ABXY)
+        const ButtonLayoutItem(
+          id: 'right_stick',
+          label: 'RS',
+          type: LayoutElementType.rightJoystick,
+          x: 0.66,
+          y: 0.76,
+          scale: 1.0,
+          actions: [GamepadButton.rightStick],
+        ),
+
+        // 4. Top Left Triggers & Shoulders (LT, LB)
         ButtonLayoutItem(
           id: 'btn_lt',
           label: lbl(GamepadButton.leftTrigger),
           type: LayoutElementType.singleButton,
-          x: 0.10,
+          x: 0.09,
           y: 0.14,
-          scale: 1.0,
+          scale: 1.05,
+          colorHex: 0xFF222B3A,
           actions: const [GamepadButton.leftTrigger],
         ),
         ButtonLayoutItem(
@@ -234,72 +291,84 @@ class ControllerLayout {
           type: LayoutElementType.singleButton,
           x: 0.22,
           y: 0.14,
-          scale: 1.0,
+          scale: 1.05,
+          colorHex: 0xFF222B3A,
           actions: const [GamepadButton.leftShoulder],
         ),
+
+        // 5. Top Right Shoulders & Triggers (RB, RT)
         ButtonLayoutItem(
           id: 'btn_rb',
           label: lbl(GamepadButton.rightShoulder),
           type: LayoutElementType.singleButton,
           x: 0.78,
           y: 0.14,
-          scale: 1.0,
+          scale: 1.05,
+          colorHex: 0xFF222B3A,
           actions: const [GamepadButton.rightShoulder],
         ),
         ButtonLayoutItem(
           id: 'btn_rt',
           label: lbl(GamepadButton.rightTrigger),
           type: LayoutElementType.singleButton,
-          x: 0.90,
+          x: 0.91,
           y: 0.14,
-          scale: 1.0,
+          scale: 1.05,
+          colorHex: 0xFF222B3A,
           actions: const [GamepadButton.rightTrigger],
         ),
-        // Face Buttons (South, East, West, North)
+
+        // 6. Upper-Right Diamond Face Buttons (Y, X, B, A — spacious diamond)
         ButtonLayoutItem(
-          id: 'btn_south',
-          label: lbl(GamepadButton.south),
+          id: 'btn_north',
+          label: lbl(GamepadButton.north), // Y (Yellow)
           type: LayoutElementType.singleButton,
-          x: 0.82,
-          y: 0.56,
+          x: 0.83,
+          y: 0.28,
           scale: 1.0,
-          actions: const [GamepadButton.south],
-        ),
-        ButtonLayoutItem(
-          id: 'btn_east',
-          label: lbl(GamepadButton.east),
-          type: LayoutElementType.singleButton,
-          x: 0.90,
-          y: 0.44,
-          scale: 1.0,
-          actions: const [GamepadButton.east],
+          colorHex: 0xFFF5B000,
+          actions: const [GamepadButton.north],
         ),
         ButtonLayoutItem(
           id: 'btn_west',
-          label: lbl(GamepadButton.west),
+          label: lbl(GamepadButton.west), // X (Blue)
           type: LayoutElementType.singleButton,
           x: 0.74,
-          y: 0.44,
+          y: 0.43,
           scale: 1.0,
+          colorHex: 0xFF0078D7,
           actions: const [GamepadButton.west],
         ),
         ButtonLayoutItem(
-          id: 'btn_north',
-          label: lbl(GamepadButton.north),
+          id: 'btn_east',
+          label: lbl(GamepadButton.east), // B (Red)
           type: LayoutElementType.singleButton,
-          x: 0.82,
-          y: 0.32,
+          x: 0.92,
+          y: 0.43,
           scale: 1.0,
-          actions: const [GamepadButton.north],
+          colorHex: 0xFFE81123,
+          actions: const [GamepadButton.east],
         ),
-        // Center System Buttons
+        ButtonLayoutItem(
+          id: 'btn_south',
+          label: lbl(GamepadButton.south), // A (Green)
+          type: LayoutElementType.singleButton,
+          x: 0.83,
+          y: 0.58,
+          scale: 1.0,
+          colorHex: 0xFF107C10,
+          actions: const [GamepadButton.south],
+        ),
+
+        // 7. Center System Buttons (View, Xbox Guide, Menu — positioned below top bar)
         ButtonLayoutItem(
           id: 'btn_select',
           label: lbl(GamepadButton.select),
           type: LayoutElementType.singleButton,
-          x: 0.42,
-          y: 0.22,
-          scale: 0.85,
+          x: 0.41,
+          y: 0.30,
+          scale: 0.78,
+          colorHex: 0xFF232D3F,
           actions: const [GamepadButton.select],
         ),
         ButtonLayoutItem(
@@ -307,18 +376,56 @@ class ControllerLayout {
           label: lbl(GamepadButton.guide),
           type: LayoutElementType.singleButton,
           x: 0.50,
-          y: 0.22,
-          scale: 0.95,
+          y: 0.28,
+          scale: 0.92,
+          colorHex: 0xFF107C10,
           actions: const [GamepadButton.guide],
         ),
         ButtonLayoutItem(
           id: 'btn_start',
           label: lbl(GamepadButton.start),
           type: LayoutElementType.singleButton,
-          x: 0.58,
-          y: 0.22,
-          scale: 0.85,
+          x: 0.59,
+          y: 0.30,
+          scale: 0.78,
+          colorHex: 0xFF232D3F,
           actions: const [GamepadButton.start],
+        ),
+
+        // 8. Built-in Default Combo Buttons:
+        // (1) Sequential Macro: X -> Y -> A -> A (75ms per step)
+        const ButtonLayoutItem(
+          id: 'combo_1',
+          label: '(1)',
+          type: LayoutElementType.comboButton,
+          x: 0.45,
+          y: 0.52,
+          scale: 0.95,
+          colorHex: 0xFFFF4081,
+          comboMode: ComboExecutionMode.sequence,
+          stepDelayMs: 75,
+          actions: [
+            GamepadButton.west, // X
+            GamepadButton.north, // Y
+            GamepadButton.south, // A
+            GamepadButton.south, // A
+          ],
+        ),
+        // (2) Instant Combo: LB + RB (Simultaneous)
+        const ButtonLayoutItem(
+          id: 'combo_2',
+          label: '(2)',
+          type: LayoutElementType.comboButton,
+          x: 0.55,
+          y: 0.52,
+          scale: 0.95,
+          colorHex: 0xFF7C4DFF,
+          comboMode: ComboExecutionMode.simultaneous,
+          stepDelayMs: 0,
+          actions: [
+            GamepadButton.leftShoulder,
+            GamepadButton.rightShoulder,
+          ],
         ),
       ],
     );
@@ -339,33 +446,39 @@ class ControllerLayout {
     );
   }
 
-  /// Adds a new custom Combo / Macro button (e.g., `LB + RB` or `Y + B`) at the specified coordinates and size.
+  /// Adds or updates a custom Combo / Macro button (supports both simultaneous
+  /// combos like `LB + RB` and sequential millisecond macros like `X -> Y -> A -> A`).
   ControllerLayout addComboButton({
     required String id,
     required String label,
     required List<GamepadButton> comboActions,
+    ComboExecutionMode comboMode = ComboExecutionMode.simultaneous,
+    int stepDelayMs = 75,
     double x = 0.50,
-    double y = 0.50,
+    double y = 0.52,
     double scale = 1.0,
-    double opacity = 0.85,
+    double opacity = 0.90,
     int? colorHex,
   }) {
     if (comboActions.isEmpty) {
-      throw ArgumentError('comboActions must contain at least one GamepadButton');
+      throw ArgumentError(
+          'comboActions must contain at least one GamepadButton');
     }
     final newItem = ButtonLayoutItem(
       id: id,
       label: label,
       type: LayoutElementType.comboButton,
-      x: x.clamp(0.0, 1.0),
-      y: y.clamp(0.0, 1.0),
-      scale: scale.clamp(0.4, 3.0),
-      opacity: opacity.clamp(0.1, 1.0),
-      colorHex: colorHex,
+      x: x.clamp(0.04, 0.96),
+      y: y.clamp(0.06, 0.94),
+      scale: scale.clamp(0.4, 2.5),
+      opacity: opacity.clamp(0.15, 1.0),
+      colorHex: colorHex ?? 0xFFFF4081,
       actions: List.unmodifiable(comboActions),
+      comboMode: comboMode,
+      stepDelayMs: stepDelayMs.clamp(0, 2000),
     );
     return ControllerLayout(
-      id: id,
+      id: this.id,
       name: name,
       items: [...items.where((e) => e.id != id), newItem],
     );

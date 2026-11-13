@@ -101,7 +101,9 @@ class DartPadReceiverServer {
       bindAddress ?? InternetAddress.anyIPv4,
       port,
     );
-    _socket!.broadcastEnabled = true;
+    try {
+      _socket!.broadcastEnabled = true;
+    } catch (_) {}
 
     _socket!.listen(_onSocketEvent);
 
@@ -216,6 +218,7 @@ class DartPadReceiverServer {
               payload: {
                 'serverName': serverName,
                 'port': boundPort,
+                'pin': _pairingPin,
               },
             ),
           );
@@ -327,6 +330,24 @@ class DartPadReceiverServer {
   }
 
   static String _generatePin() {
+    try {
+      final home = Platform.environment['USERPROFILE'] ??
+          Platform.environment['HOME'];
+      if (home != null && home.isNotEmpty) {
+        final dir = Directory('$home/.dartpad')..createSync(recursive: true);
+        final pinFile = File('${dir.path}/receiver_pin.txt');
+        if (pinFile.existsSync()) {
+          final saved = pinFile.readAsStringSync().trim();
+          if (saved.length == 6 && int.tryParse(saved) != null) {
+            return saved;
+          }
+        }
+        final rnd = Random.secure();
+        final newPin = (100000 + rnd.nextInt(900000)).toString();
+        pinFile.writeAsStringSync(newPin);
+        return newPin;
+      }
+    } catch (_) {}
     final rnd = Random.secure();
     return (100000 + rnd.nextInt(900000)).toString();
   }

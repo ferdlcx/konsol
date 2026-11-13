@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:dartpad_protocol/dartpad_protocol.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -19,27 +20,34 @@ class DartPadMobileApp extends StatefulWidget {
 
 class _DartPadMobileAppState extends State<DartPadMobileApp> {
   late final MobileControllerEngine _engine;
-
-  /// Offline-first: Open directly to the Controller, Layout Editor, & Settings
-  /// WITHOUT forcing the user to pair/connect with a PC first!
   bool _showConnectionScreen = false;
-  bool _hapticEnabled = true;
 
   @override
   void initState() {
     super.initState();
+    final persistentStore = DartPadConfigStore.defaultPersistentStore();
     _engine = MobileControllerEngine(
       profile: ControllerProfile.xboxDefault(),
       layout: ControllerLayout.defaultLandscape(),
+      configStore: persistentStore,
       updateRateHz: 120,
       onRumbleReceived: _handleGameRumble,
+      onConnectionChanged: (_, __) {
+        if (mounted) setState(() {});
+      },
+    );
+
+    // Load saved layout, combo buttons, theme, scale, and paired PC from disk
+    // and start automatic Wi-Fi + USB discovery/pairing in the background!
+    unawaited(
+      _engine.initializeFromDisk(startBackgroundAutoPair: true).then((_) {
+        if (mounted) setState(() {});
+      }),
     );
   }
 
-  /// Translates incoming PC Game Force Feedback ([RumbleEvent]) into physical
-  /// phone vibration intensity (Heavy, Medium, or Light impact).
   void _handleGameRumble(RumbleEvent rumble) {
-    if (!_hapticEnabled || rumble.isSilent) return;
+    if (!_engine.settings.hapticFeedback || rumble.isSilent) return;
     final peak = rumble.peakIntensity;
     if (peak >= 0.70) {
       HapticFeedback.heavyImpact();
@@ -58,30 +66,28 @@ class _DartPadMobileAppState extends State<DartPadMobileApp> {
 
   @override
   Widget build(BuildContext context) {
+    final themePreset = _engine.settings.themePreset;
+
     return MaterialApp(
       title: 'DartPad Controller',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(useMaterial3: true).copyWith(
-        scaffoldBackgroundColor: const Color(0xFF0B0E14),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF00E5FF),
-          secondary: Color(0xFFFF4081),
+        scaffoldBackgroundColor: Color(themePreset.bgHex),
+        colorScheme: ColorScheme.dark(
+          primary: Color(themePreset.primaryHex),
+          secondary: Color(themePreset.accentHex),
         ),
       ),
       home: _showConnectionScreen
           ? ConnectionScreen(
               engine: _engine,
-              onConnected: () {
+              onBackToController: () {
                 setState(() => _showConnectionScreen = false);
               },
             )
           : ControllerScreen(
               engine: _engine,
-              hapticEnabled: _hapticEnabled,
-              onHapticChanged: (enabled) {
-                setState(() => _hapticEnabled = enabled);
-              },
-              onOpenConnectionSettings: () {
+              onOpenConnectionScreen: () {
                 setState(() => _showConnectionScreen = true);
               },
             ),

@@ -1,20 +1,19 @@
 import 'package:dartpad_protocol/dartpad_protocol.dart';
 import 'package:flutter/material.dart';
 
-/// Home & Connection Screen for `dartpad_mobile`.
+/// Automatic & Manual Pairing Screen for `dartpad_mobile`.
 ///
-/// Allows the user to:
-/// 1. Paste / Scan the `dartpad://connect?...` QR Code URI displayed on the Windows PC.
-/// 2. Or enter the PC's Local IP, Port (`42100`), and 6-digit Pairing PIN manually.
-/// 3. Configure physical Volume Up / Volume Down trigger bindings (`LT`/`RT`) and deadzone.
+/// Prioritizes **Automatic Discovery & Auto-Pairing** over both **Wi-Fi LAN**
+/// and **USB Tethering (RNDIS / Hotspot)**, and automatically saves the paired
+/// PC credentials to persistent storage so they survive device shutdowns.
 class ConnectionScreen extends StatefulWidget {
   final MobileControllerEngine engine;
-  final VoidCallback onConnected;
+  final VoidCallback onBackToController;
 
   const ConnectionScreen({
     super.key,
     required this.engine,
-    required this.onConnected,
+    required this.onBackToController,
   });
 
   @override
@@ -22,16 +21,33 @@ class ConnectionScreen extends StatefulWidget {
 }
 
 class _ConnectionScreenState extends State<ConnectionScreen> {
-  final TextEditingController _qrUriController = TextEditingController();
-  final TextEditingController _ipController =
-      TextEditingController(text: '192.168.1.10');
-  final TextEditingController _portController = TextEditingController(
-    text: DartPadProtocolConstants.defaultPort.toString(),
-  );
-  final TextEditingController _pinController = TextEditingController();
+  late final TextEditingController _qrUriController;
+  late final TextEditingController _ipController;
+  late final TextEditingController _portController;
+  late final TextEditingController _pinController;
 
-  bool _isConnecting = false;
-  String? _errorMessage;
+  bool _isAutoScanning = false;
+  bool _isConnectingManual = false;
+  String? _statusMessage;
+  bool _isError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final s = widget.engine.settings;
+    _qrUriController = TextEditingController();
+    _ipController =
+        TextEditingController(text: s.lastConnectedIp ?? '192.168.1.10');
+    _portController = TextEditingController(
+      text: s.lastConnectedPort.toString(),
+    );
+    _pinController = TextEditingController(text: s.lastPairedPin ?? '');
+
+    // Automatically trigger Wi-Fi + USB discovery scan when opening screen if not yet connected
+    if (!widget.engine.isConnected) {
+      _runAutoDiscoverAndPair();
+    }
+  }
 
   @override
   void dispose() {
@@ -42,34 +58,76 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
     super.dispose();
   }
 
+  Future<void> _runAutoDiscoverAndPair() async {
+    if (_isAutoScanning) return;
+    setState(() {
+      _isAutoScanning = true;
+      _isError = false;
+      _statusMessage =
+          'Mencari & Auto-Pairing PC via Wi-Fi LAN & USB Tethering...';
+    });
+
+    final ok = await widget.engine.discoverAndAutoConnect(
+      timeout: const Duration(milliseconds: 1600),
+    );
+    if (!mounted) return;
+
+    setState(() {
+      _isAutoScanning = false;
+      if (ok) {
+        _isError = false;
+        _statusMessage =
+            'Berhasil Auto-Pair ke ${widget.engine.connectedServerName} (${widget.engine.connectedServerIp})! Tersimpan otomatis.';
+        _ipController.text = widget.engine.connectedServerIp ?? '';
+        _pinController.text = widget.engine.settings.lastPairedPin ?? '';
+      } else {
+        _isError = true;
+        _statusMessage =
+            'PC belum terdeteksi otomatis. Pastikan DartPad.exe berjalan di PC (Wi-Fi satu jaringan atau aktifkan USB Tethering).';
+      }
+    });
+
+    if (ok) {
+      await Future<void>.delayed(const Duration(milliseconds: 450));
+      if (mounted) widget.onBackToController();
+    }
+  }
+
   Future<void> _connectWithQrUri() async {
     setState(() {
-      _isConnecting = true;
-      _errorMessage = null;
+      _isConnectingManual = true;
+      _isError = false;
+      _statusMessage = null;
     });
     try {
       final ok = await widget.engine.connectFromQrUri(_qrUriController.text);
       if (!mounted) return;
       if (ok) {
-        widget.onConnected();
+        widget.onBackToController();
       } else {
-        setState(() => _errorMessage = 'Gagal terhubung: PIN ditolak atau PC tidak merespon.');
+        setState(() {
+          _isError = true;
+          _statusMessage = 'Gagal terhubung via QR URI.';
+        });
       }
     } on FormatException catch (e) {
-      setState(() => _errorMessage = e.message);
+      setState(() {
+        _isError = true;
+        _statusMessage = e.message;
+      });
     } finally {
-      if (mounted) setState(() => _isConnecting = false);
+      if (mounted) setState(() => _isConnectingManual = false);
     }
   }
 
   Future<void> _connectManual() async {
     setState(() {
-      _isConnecting = true;
-      _errorMessage = null;
+      _isConnectingManual = true;
+      _isError = false;
+      _statusMessage = null;
     });
     try {
-      final port =
-          int.tryParse(_portController.text.trim()) ??
+      final port = int.tryParse(_portController.text.trim()) ??
           DartPadProtocolConstants.defaultPort;
       final payload = PairingPayload(
         ip: _ipController.text.trim(),
@@ -80,216 +138,300 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
       final ok = await widget.engine.connectWithPayload(payload);
       if (!mounted) return;
       if (ok) {
-        widget.onConnected();
+        widget.onBackToController();
       } else {
-        setState(() => _errorMessage = 'Gagal terhubung: Periksa IP dan 6-digit PIN di layar PC.');
+        setState(() {
+          _isError = true;
+          _statusMessage =
+              'Gagal terhubung: Periksa IP dan 6-digit PIN di layar PC.';
+        });
       }
     } on FormatException catch (e) {
-      setState(() => _errorMessage = e.message);
+      setState(() {
+        _isError = true;
+        _statusMessage = e.message;
+      });
     } finally {
-      if (mounted) setState(() => _isConnecting = false);
+      if (mounted) setState(() => _isConnectingManual = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final profile = widget.engine.profile;
+    final settings = widget.engine.settings;
+    final theme = settings.themePreset;
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF0B0E14),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF121722),
-        title: const Text(
-          'DartPad Mobile Controller',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        actions: [
-          TextButton.icon(
-            onPressed: widget.onConnected,
-            icon: const Icon(Icons.sports_esports, color: Color(0xFF00E5FF)),
-            label: const Text(
-              'Buka Controller / Edit Layout',
-              style: TextStyle(color: Color(0xFF00E5FF)),
-            ),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          // Pressing Android Back on Connection screen returns to Controller instead of exiting APK!
+          widget.onBackToController();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Color(theme.bgHex),
+        appBar: AppBar(
+          backgroundColor: Color(theme.panelHex),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            tooltip: 'Kembali ke Controller',
+            onPressed: widget.onBackToController,
           ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Left Column: QR Code Pairing
-            Expanded(
-              child: Container(
+          title: const Text(
+            'Auto-Pairing (Wi-Fi & USB) & Koneksi PC',
+            style: TextStyle(
+                color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+          ),
+          actions: [
+            TextButton.icon(
+              onPressed: widget.onBackToController,
+              icon: Icon(Icons.sports_esports, color: Color(theme.accentHex)),
+              label: Text(
+                'Kembali ke Controller',
+                style: TextStyle(
+                    color: Color(theme.accentHex), fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 1. Primary Automatic Wi-Fi & USB Pairing Card
+              Container(
+                width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF151B26),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white12),
+                  color: Color(theme.panelHex),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                      color: Color(theme.accentHex).withValues(alpha: 0.6),
+                      width: 1.5),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Row(
+                    Row(
                       children: [
-                        Icon(Icons.qr_code_scanner, color: Color(0xFF00E5FF)),
-                        SizedBox(width: 8),
-                        Text(
-                          'Scan / Paste QR Code dari PC',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
+                        Icon(Icons.bolt, color: Color(theme.accentHex)),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'Otomatisasi Pairing (Wi-Fi LAN & USB Tethering)',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
+                        if (settings.lastConnectedIp != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.white10,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              'Tersimpan: ${settings.lastPairedServerName ?? "PC"} (${settings.lastConnectedIp})',
+                              style: const TextStyle(
+                                  color: Colors.white70, fontSize: 11),
+                            ),
+                          ),
                       ],
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 6),
                     const Text(
-                      'Jalankan dartpad_receiver.exe di Windows PC, lalu scan QR Code yang tampil di layar PC.',
+                      'Tidak perlu ketik IP/PIN manual! Cukup jalankan DartPad.exe di PC (via Wi-Fi atau colok kabel USB + nyalakan USB Tethering). Koneksi otomatis disimpan walaupun HP/PC dimatikan.',
                       style: TextStyle(color: Colors.white70, fontSize: 12),
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _qrUriController,
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
-                      decoration: const InputDecoration(
-                        hintText: 'dartpad://connect?ip=192.168.1.10&port=42100&pin=...',
-                        hintStyle: TextStyle(color: Colors.white38),
-                        filled: true,
-                        fillColor: Color(0xFF0E131B),
+                    if (_statusMessage != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        _statusMessage!,
+                        style: TextStyle(
+                          color: _isError
+                              ? Colors.amberAccent
+                              : const Color(0xFF00E676),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
+                    ],
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF00E5FF),
+                          backgroundColor: Color(theme.accentHex),
                           foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
-                        onPressed: _isConnecting ? null : _connectWithQrUri,
-                        icon: const Icon(Icons.qr_code),
-                        label: const Text(
-                          'Connect via QR Payload',
-                          style: TextStyle(fontWeight: FontWeight.bold),
+                        onPressed:
+                            _isAutoScanning ? null : _runAutoDiscoverAndPair,
+                        icon: _isAutoScanning
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.black),
+                              )
+                            : const Icon(Icons.radar),
+                        label: Text(
+                          _isAutoScanning
+                              ? 'Sedang Mencari PC di Wi-Fi & USB...'
+                              : 'SCAN & AUTO-PAIR SEKARANG (Wi-Fi / USB)',
+                          style: const TextStyle(fontWeight: FontWeight.w900),
                         ),
                       ),
                     ),
                   ],
                 ),
               ),
-            ),
-            const SizedBox(width: 20),
+              const SizedBox(height: 14),
 
-            // Right Column: Manual IP + 6-Digit PIN & Volume Trigger Settings
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF151B26),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white12),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Koneksi Manual (Wi-Fi / USB Tethering)',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+              // 2. Fallback Manual IP / PIN & QR URI Row
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Color(theme.panelHex),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.white12),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          flex: 2,
-                          child: TextField(
-                            controller: _ipController,
-                            style: const TextStyle(color: Colors.white),
-                            decoration: const InputDecoration(
-                              labelText: 'IP Address PC',
-                              labelStyle: TextStyle(color: Colors.white70),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Opsi Cadangan: QR URI',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextField(
-                            controller: _portController,
-                            style: const TextStyle(color: Colors.white),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _qrUriController,
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 12),
                             decoration: const InputDecoration(
-                              labelText: 'Port UDP',
-                              labelStyle: TextStyle(color: Colors.white70),
+                              isDense: true,
+                              hintText:
+                                  'dartpad://connect?ip=192.168.1.10&port=42100&pin=...',
+                              hintStyle: TextStyle(color: Colors.white38),
+                              filled: true,
+                              fillColor: Color(0xFF0E131B),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _pinController,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
-                        labelText: '6-Digit Pairing PIN (lihat di PC)',
-                        labelStyle: TextStyle(color: Colors.white70),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text(
-                        'Tombol Volume HP sebagai Trigger (LT / RT)',
-                        style: TextStyle(color: Colors.white, fontSize: 13),
-                      ),
-                      subtitle: const Text(
-                        'Volume Up = LT/L2 • Volume Down = RT/R2',
-                        style: TextStyle(color: Colors.white54, fontSize: 11),
-                      ),
-                      value: profile.enableVolumeKeysAsTriggers,
-                      activeColor: const Color(0xFF00E5FF),
-                      onChanged: (val) {
-                        widget.engine.setProfile(
-                          ControllerProfile(
-                            id: profile.id,
-                            name: profile.name,
-                            type: profile.type,
-                            deadzone: profile.deadzone,
-                            sensitivity: profile.sensitivity,
-                            buttonLabels: profile.buttonLabels,
-                            enableVolumeKeysAsTriggers: val,
-                            hardwareKeyBindings: profile.hardwareKeyBindings,
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: _isConnectingManual
+                                  ? null
+                                  : _connectWithQrUri,
+                              icon: const Icon(Icons.qr_code, size: 16),
+                              label: const Text('Connect via QR URI'),
+                            ),
                           ),
-                        );
-                        setState(() {});
-                      },
-                    ),
-                    if (_errorMessage != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        _errorMessage!,
-                        style: const TextStyle(color: Colors.redAccent, fontSize: 12),
-                      ),
-                    ],
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _isConnecting ? null : _connectManual,
-                        child: Text(
-                          _isConnecting ? 'Menghubungkan...' : 'Connect dengan PIN',
-                        ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Color(theme.panelHex),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.white12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Opsi Cadangan: Input IP & PIN Manual',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                flex: 2,
+                                child: TextField(
+                                  controller: _ipController,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 12),
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    labelText: 'IP PC (Wi-Fi / USB)',
+                                    labelStyle: TextStyle(
+                                        color: Colors.white70, fontSize: 11),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: TextField(
+                                  controller: _portController,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 12),
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    labelText: 'Port',
+                                    labelStyle: TextStyle(
+                                        color: Colors.white70, fontSize: 11),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: TextField(
+                                  controller: _pinController,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 12),
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    labelText: 'PIN 6-Digit',
+                                    labelStyle: TextStyle(
+                                        color: Colors.white70, fontSize: 11),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton(
+                              onPressed:
+                                  _isConnectingManual ? null : _connectManual,
+                              child: Text(_isConnectingManual
+                                  ? 'Menghubungkan...'
+                                  : 'Connect Manual & Simpan'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

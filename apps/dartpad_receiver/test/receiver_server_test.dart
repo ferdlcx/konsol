@@ -242,5 +242,81 @@ void main() {
         await tempDir.delete(recursive: true);
       }
     });
+
+    test('Zero-touch Auto-Discovery & Auto-Pair (Wi-Fi/USB) + Sequential Combo (1) X -> Y -> A -> A', () async {
+      final tempDir = await Directory.systemTemp.createTemp('dartpad_autopair_test_');
+      try {
+        final store = DartPadConfigStore(tempDir);
+        await store.ensureInitialized();
+
+        final observedButtonSequence = <GamepadButton>[];
+        GamepadButton? lastRecorded;
+        final trackerGamepad = SimulatedGamepadProvider(
+          onStateChanged: (st) {
+            if (st.buttons.length == 1) {
+              final b = st.buttons.first;
+              if (b != lastRecorded) {
+                observedButtonSequence.add(b);
+                lastRecorded = b;
+              }
+            } else if (st.buttons.isEmpty) {
+              lastRecorded = null;
+            }
+          },
+        );
+
+        final autoServer = DartPadReceiverServer(
+          port: 0,
+          serverName: 'AutoPair-PC',
+          gamepadProvider: trackerGamepad,
+          customPin: '654321',
+        );
+        await autoServer.start(bindAddress: InternetAddress.loopbackIPv4);
+
+        final mobileEngine = MobileControllerEngine(
+          configStore: store,
+          layout: ControllerLayout.defaultLandscape(),
+        );
+
+        // 1. Auto-discover & Auto-pair without typing IP or PIN!
+        final paired = await mobileEngine.discoverAndAutoConnect(
+          port: autoServer.boundPort,
+          timeout: const Duration(seconds: 2),
+        );
+        expect(paired, isTrue);
+
+        // Verify paired credentials were saved to disk for reboot persistence
+        final savedSettings = await store.loadSettings();
+        expect(savedSettings.lastPairedPin, equals('654321'));
+        expect(savedSettings.lastConnectedPort, equals(autoServer.boundPort));
+
+        // 2. Trigger built-in Combo (1): Sequential Macro [X -> Y -> A -> A]
+        // Speed up stepDelayMs to 30ms for fast unit test verification
+        mobileEngine.setLayout(
+          mobileEngine.layout.updateItem(
+            'combo_1',
+            (item) => item.copyWith(stepDelayMs: 35),
+          ),
+        );
+        mobileEngine.handleLayoutItemTouch('combo_1', true);
+
+        await Future<void>.delayed(const Duration(milliseconds: 220));
+
+        expect(
+          observedButtonSequence,
+          equals([
+            GamepadButton.west, // X
+            GamepadButton.north, // Y
+            GamepadButton.south, // A
+            GamepadButton.south, // A
+          ]),
+        );
+
+        await mobileEngine.disconnect();
+        await autoServer.stop();
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    });
   });
 }
