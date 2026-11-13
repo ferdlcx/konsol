@@ -249,7 +249,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                           ),
                           Expanded(
                             child: Slider(
-                              value: settings.globalScale.clamp(0.6, 1.5),
+                              value: settings.globalScale.clamp(0.6, 1.5).toDouble(),
                               min: 0.6,
                               max: 1.5,
                               activeColor: Color(theme.accentHex),
@@ -279,7 +279,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                           ),
                           Expanded(
                             child: Slider(
-                              value: deadzone.clamp(0.0, 0.35),
+                              value: deadzone.clamp(0.0, 0.35).toDouble(),
                               min: 0.0,
                               max: 0.35,
                               activeColor: Color(theme.accentHex),
@@ -304,7 +304,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                           ),
                           Expanded(
                             child: Slider(
-                              value: sensitivity.clamp(0.5, 2.0),
+                              value: sensitivity.clamp(0.5, 2.0).toDouble(),
                               min: 0.5,
                               max: 2.0,
                               activeColor: Color(theme.accentHex),
@@ -912,18 +912,22 @@ class _ControllerScreenState extends State<ControllerScreen> {
       LayoutElementType.singleButton => shortestSide * 0.13,
     };
 
-    final scaledSize =
-        (baseDimension * globalScale * item.scale).clamp(28.0, shortestSide * 0.48);
-    final elemWidth = isBumperOrTrigger
+    final double scaledSize = (baseDimension * globalScale * item.scale)
+        .clamp(28.0, shortestSide * 0.48)
+        .toDouble();
+    final double elemWidth = isBumperOrTrigger
         ? scaledSize * 1.48
         : (item.isCombo ? scaledSize * 1.35 : scaledSize);
-    final elemHeight = isBumperOrTrigger ? scaledSize * 0.78 : scaledSize;
+    final double elemHeight =
+        isBumperOrTrigger ? scaledSize * 0.78 : scaledSize;
 
     // Clamp strictly inside screen boundaries so nothing EVER overflows or collides with edges
-    final left = ((item.x * canvasWidth) - (elemWidth / 2))
-        .clamp(4.0, math.max(4.0, canvasWidth - elemWidth - 4.0));
-    final top = ((item.y * canvasHeight) - (elemHeight / 2))
-        .clamp(4.0, math.max(4.0, canvasHeight - elemHeight - 4.0));
+    final double left = ((item.x * canvasWidth) - (elemWidth / 2))
+        .clamp(4.0, math.max(4.0, canvasWidth - elemWidth - 4.0))
+        .toDouble();
+    final double top = ((item.y * canvasHeight) - (elemHeight / 2))
+        .clamp(4.0, math.max(4.0, canvasHeight - elemHeight - 4.0))
+        .toDouble();
 
     final isSelected = _selectedItemId == item.id;
 
@@ -1053,7 +1057,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                   style: TextStyle(color: Colors.white70, fontSize: 11)),
               Expanded(
                 child: Slider(
-                  value: selected.scale.clamp(0.5, 2.2),
+                  value: selected.scale.clamp(0.5, 2.2).toDouble(),
                   min: 0.5,
                   max: 2.2,
                   activeColor: Color(theme.accentHex),
@@ -1075,7 +1079,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                   style: TextStyle(color: Colors.white70, fontSize: 11)),
               Expanded(
                 child: Slider(
-                  value: selected.opacity.clamp(0.2, 1.0),
+                  value: selected.opacity.clamp(0.2, 1.0).toDouble(),
                   min: 0.2,
                   max: 1.0,
                   activeColor: Color(theme.accentHex),
@@ -1201,7 +1205,7 @@ class _GamepadActionButtonState extends State<_GamepadActionButton> {
               style: TextStyle(
                 color: _isPressed ? Colors.black : Colors.white,
                 fontWeight: FontWeight.w900,
-                fontSize: (widget.height * 0.34).clamp(10.0, 20.0),
+                fontSize: (widget.height * 0.34).clamp(10.0, 20.0).toDouble(),
               ),
             ),
             if (widget.subLabel != null)
@@ -1211,7 +1215,7 @@ class _GamepadActionButtonState extends State<_GamepadActionButton> {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: _isPressed ? Colors.black87 : Colors.white70,
-                  fontSize: (widget.height * 0.17).clamp(7.5, 10.5),
+                  fontSize: (widget.height * 0.17).clamp(7.5, 10.5).toDouble(),
                   fontWeight: FontWeight.w600,
                 ),
               ),
