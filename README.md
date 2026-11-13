@@ -2,6 +2,14 @@
 
 **DartPad** mengubah smartphone Android menjadi virtual gamepad **Xbox 360** atau **PlayStation (DualShock 4)** untuk Windows 10/11 melalui **Wi-Fi** maupun **USB Tethering**, dengan latensi sangat rendah (`120 Hz` + *Instant Edge-Triggered Dispatch `0 ms`*).
 
+## 📥 Download Rilis (`v0.1.0`)
+
+* **Halaman GitHub Release**: [DartPad v0.1.0 Release](https://github.com/ferdlcx/konsol/releases/tag/v0.1.0)
+* **Android Controller (`.apk`)**: [Download `dartpad-mobile-android.apk`](https://github.com/ferdlcx/konsol/releases/download/v0.1.0/dartpad-mobile-android.apk)
+* **Windows PC Receiver (`.zip` berisi `.exe` + `.dll`)**: [Download `dartpad-windows-x64.zip`](https://github.com/ferdlcx/konsol/releases/download/v0.1.0/dartpad-windows-x64.zip)
+* **Windows Receiver Standalone (`.exe`)**: [Download `dartpad_receiver.exe`](https://github.com/ferdlcx/konsol/releases/download/v0.1.0/dartpad_receiver.exe)
+* **Windows Native Driver Bridge (`.dll`)**: [Download `dartpad_vgamepad.dll`](https://github.com/ferdlcx/konsol/releases/download/v0.1.0/dartpad_vgamepad.dll)
+
 ---
 
 ## Fitur Utama
