@@ -19,7 +19,11 @@ class DartPadMobileApp extends StatefulWidget {
 
 class _DartPadMobileAppState extends State<DartPadMobileApp> {
   late final MobileControllerEngine _engine;
-  bool _showController = false;
+
+  /// Offline-first: Open directly to the Controller, Layout Editor, & Settings
+  /// WITHOUT forcing the user to pair/connect with a PC first!
+  bool _showConnectionScreen = false;
+  bool _hapticEnabled = true;
 
   @override
   void initState() {
@@ -35,7 +39,7 @@ class _DartPadMobileAppState extends State<DartPadMobileApp> {
   /// Translates incoming PC Game Force Feedback ([RumbleEvent]) into physical
   /// phone vibration intensity (Heavy, Medium, or Light impact).
   void _handleGameRumble(RumbleEvent rumble) {
-    if (rumble.isSilent) return;
+    if (!_hapticEnabled || rumble.isSilent) return;
     final peak = rumble.peakIntensity;
     if (peak >= 0.70) {
       HapticFeedback.heavyImpact();
@@ -64,17 +68,21 @@ class _DartPadMobileAppState extends State<DartPadMobileApp> {
           secondary: Color(0xFFFF4081),
         ),
       ),
-      home: _showController
-          ? ControllerScreen(
-              engine: _engine,
-              onOpenConnectionSettings: () {
-                setState(() => _showController = false);
-              },
-            )
-          : ConnectionScreen(
+      home: _showConnectionScreen
+          ? ConnectionScreen(
               engine: _engine,
               onConnected: () {
-                setState(() => _showController = true);
+                setState(() => _showConnectionScreen = false);
+              },
+            )
+          : ControllerScreen(
+              engine: _engine,
+              hapticEnabled: _hapticEnabled,
+              onHapticChanged: (enabled) {
+                setState(() => _hapticEnabled = enabled);
+              },
+              onOpenConnectionSettings: () {
+                setState(() => _showConnectionScreen = true);
               },
             ),
     );

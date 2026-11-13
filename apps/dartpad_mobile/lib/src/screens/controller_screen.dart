@@ -346,11 +346,57 @@ class _ControllerScreenState extends State<ControllerScreen> {
               ),
             ),
           ],
+          const SizedBox(width: 10),
+          // Offline Settings Button (Deadzone, Sensitivity, Volume Trigger, Haptic)
+          InkWell(
+            onTap: _openOfflineSettingsDialog,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.white10,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.tune, size: 13, color: Colors.white),
+                  SizedBox(width: 4),
+                  Text(
+                    'SETTINGS',
+                    style: TextStyle(color: Colors.white, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+          ),
           if (widget.onOpenConnectionSettings != null) ...[
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             InkWell(
               onTap: widget.onOpenConnectionSettings,
-              child: const Icon(Icons.qr_code_scanner, size: 18, color: Colors.white70),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00E5FF).withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFF00E5FF)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.qr_code_scanner,
+                        size: 13, color: Color(0xFF00E5FF)),
+                    SizedBox(width: 4),
+                    Text(
+                      'PAIR PC',
+                      style: TextStyle(
+                        color: Color(0xFF00E5FF),
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
         ],

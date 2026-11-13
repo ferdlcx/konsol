@@ -38,7 +38,7 @@ jobs:
         run: dart run apps/dartpad_receiver/bin/dartpad_receiver.dart --self-test
 
   build-windows:
-    name: Build Windows Receiver (.exe + .dll)
+    name: Build Single Windows Launcher (DartPad.exe)
     needs: test-protocol-and-receiver
     runs-on: windows-latest
     steps:
@@ -53,32 +53,18 @@ jobs:
       - name: Install dependencies
         run: dart pub get
 
-      - name: Build Native Virtual Gamepad Bridge (dartpad_vgamepad.dll)
+      - name: Compile Single Standalone DartPad.exe (with Embedded GUI Dashboard)
         run: |
-          cmake -S native/dartpad_vgamepad -B build/native
-          cmake --build build/native --config Release
+          dart compile exe apps/dartpad_receiver/bin/dartpad_receiver.dart -o DartPad.exe
 
-      - name: Compile dartpad_receiver.exe
-        run: |
-          mkdir dist-windows
-          dart compile exe apps/dartpad_receiver/bin/dartpad_receiver.dart -o dist-windows/dartpad_receiver.exe
-          copy build\native\Release\dartpad_vgamepad.dll dist-windows\dartpad_vgamepad.dll
+      - name: Verify DartPad.exe --self-test on Windows
+        run: .\DartPad.exe --self-test
 
-      - name: Verify dartpad_receiver.exe --self-test on Windows
-        run: .\dist-windows\dartpad_receiver.exe --self-test
-
-      - name: Package Windows Release Zip
-        run: |
-          Compress-Archive -Path dist-windows\* -DestinationPath dartpad-windows-x64.zip
-
-      - name: Upload Windows Artifact
+      - name: Upload DartPad.exe Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dartpad-windows-x64
-          path: |
-            dist-windows/dartpad_receiver.exe
-            dist-windows/dartpad_vgamepad.dll
-            dartpad-windows-x64.zip
+          name: dartpad-windows-exe
+          path: DartPad.exe
 
   build-android:
     name: Build Android Controller (.apk)
@@ -120,10 +106,10 @@ jobs:
     needs: [build-windows, build-android]
     runs-on: ubuntu-latest
     steps:
-      - name: Download Windows Artifacts
+      - name: Download Windows DartPad.exe
         uses: actions/download-artifact@v4
         with:
-          name: dartpad-windows-x64
+          name: dartpad-windows-exe
           path: release-assets
 
       - name: Download Android APK Artifact
@@ -135,14 +121,12 @@ jobs:
       - name: Rename APK for Release
         run: mv release-assets/app-release.apk release-assets/dartpad-mobile-android.apk
 
-      - name: Create GitHub Release & Attach Binaries
+      - name: Create/Update GitHub Release & Attach Binaries
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.1.0
-          name: "DartPad v0.1.0 — Android Controller (.apk) & Windows Receiver (.exe)"
+          name: "DartPad v0.1.0 — Single Windows Launcher (DartPad.exe) & Android APK"
           generate_release_notes: true
           files: |
-            release-assets/dartpad-windows-x64.zip
-            release-assets/dist-windows/dartpad_receiver.exe
-            release-assets/dist-windows/dartpad_vgamepad.dll
+            release-assets/DartPad.exe
             release-assets/dartpad-mobile-android.apk

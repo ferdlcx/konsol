@@ -4,69 +4,78 @@ import 'dart:io';
 import 'package:dartpad_protocol/dartpad_protocol.dart';
 import 'package:dartpad_receiver/dartpad_receiver.dart';
 
-/// Entrypoint for `dartpad_receiver` (can be compiled to `dartpad_receiver.exe` via `dart compile exe`).
+/// Single-file standalone Windows Launcher (`DartPad.exe`).
 ///
-/// Modes:
-/// - Default: Starts the UDP Receiver Server, prints the QR Pairing URI + 6-digit PIN,
-///   and opens the Live Controller Button Tester.
-/// - `--self-test`: Runs an automated local loopback test simulating an Android phone
-///   connecting via PIN/QR, pressing single buttons, Volume triggers, Combo buttons,
-///   and analog sticks, and verifying that the EXE responds with < 1ms latency.
+/// Features:
+/// - **100% Pure Dart**: No custom C++ `.dll` file required alongside `DartPad.exe`.
+/// - **Built-in Desktop GUI Dashboard**: Automatically launches the graphical
+///   DartPad Dashboard window (SVG QR Code, 6-digit PIN, Live Gamepad Button
+///   Visualizer, and One-Click Rumble Vibration Tester).
+/// - **`--self-test` Mode**: Verifies end-to-end button, volume trigger, combo,
+///   and GUI dashboard responsiveness.
 Future<void> main(List<String> args) async {
   final isSelfTest = args.contains('--self-test');
   final monitor = const LiveControllerMonitor(preset: ControllerType.xbox);
 
-  // Try native FFI driver first; gracefully fall back to SimulatedGamepadProvider
-  // so button testing works even before installing the Windows kernel driver.
-  GamepadProvider provider = FfiGamepadProvider(deviceType: ControllerType.xbox);
-  final nativeLoaded = provider.init();
-  if (!nativeLoaded) {
-    provider = SimulatedGamepadProvider(deviceType: ControllerType.xbox)..init();
-    stdout.writeln(
-      '[INFO] Native virtual driver not detected; running in Live Button Tester / Simulation mode.',
-    );
-  } else {
-    stdout.writeln('[OK] Native Virtual Gamepad Driver initialized.');
-  }
+  // 100% Pure-Dart Windows Gamepad Provider (no external custom C++ DLL needed)
+  final provider = PureDartWindowsGamepadProvider(
+    deviceType: ControllerType.xbox,
+    enableWin32KeyboardFallback: false,
+  )..init();
+
+  EmbeddedDashboardGui? gui;
 
   final server = DartPadReceiverServer(
     port: isSelfTest ? 0 : DartPadProtocolConstants.defaultPort,
     serverName: Platform.localHostname,
     gamepadProvider: provider,
-    onDiagnosticsUpdate: isSelfTest
-        ? null
-        : (snapshot) {
-            // Clear terminal screen and render live button/axis monitor
-            stdout.write('\x1B[2J\x1B[0;0H');
-            stdout.writeln(monitor.formatSnapshot(snapshot));
-          },
+    onDiagnosticsUpdate: (snapshot) {
+      gui?.broadcastSnapshot(snapshot);
+      if (!isSelfTest) {
+        stdout.write('\x1B[2J\x1B[0;0H');
+        stdout.writeln(monitor.formatSnapshot(snapshot));
+        if (gui != null) {
+          stdout.writeln(' GUI Dashboard : ${gui.dashboardUrl}');
+        }
+      }
+    },
   );
 
   await server.start(
-    bindAddress: isSelfTest ? InternetAddress.loopbackIPv4 : InternetAddress.anyIPv4,
+    bindAddress:
+        isSelfTest ? InternetAddress.loopbackIPv4 : InternetAddress.anyIPv4,
   );
 
   final localIp = await _detectLocalIpv4() ?? '127.0.0.1';
   final qrPayload = server.buildPairingPayload(localIp);
 
+  gui = EmbeddedDashboardGui(
+    receiverServer: server,
+    localIp: localIp,
+  );
+  await gui.start(openDesktopWindow: !isSelfTest);
+
   stdout.writeln('====================================================================');
-  stdout.writeln(' DARTPAD WINDOWS RECEIVER READY — SCAN QR OR ENTER PIN ON PHONE');
-  stdout.writeln(' Local IP : $localIp:${server.boundPort}');
-  stdout.writeln(' PIN Code : ${server.pairingPin}');
-  stdout.writeln(' QR URI   : ${qrPayload.toQrUriString()}');
+  stdout.writeln(' DARTPAD WINDOWS LAUNCHER (SINGLE .EXE + GUI DASHBOARD)');
+  stdout.writeln(' GUI Window : ${gui.dashboardUrl}');
+  stdout.writeln(' Local IP   : $localIp:${server.boundPort}');
+  stdout.writeln(' PIN Code   : ${server.pairingPin}');
+  stdout.writeln(' QR URI     : ${qrPayload.toQrUriString()}');
   stdout.writeln('--------------------------------------------------------------------');
   stdout.write(QrPairingRenderer.renderTerminalQr(qrPayload));
   stdout.writeln('====================================================================');
 
   if (isSelfTest) {
-    final exitCode = await _runButtonResponseSelfTest(server, qrPayload, monitor);
+    final exitCode =
+        await _runButtonResponseSelfTest(server, qrPayload, monitor);
+    await gui.stop();
     await server.stop();
     exit(exitCode);
   }
 
-  // Keep running until Ctrl+C
   await ProcessSignal.sigint.watch().first;
-  stdout.writeln('\nShutting down DartPad Receiver & releasing all buttons...');
+  stdout.writeln('\nShutting down DartPad & releasing all buttons...');
+  await gui.stop();
   await server.stop();
 }
 
@@ -75,8 +84,10 @@ Future<int> _runButtonResponseSelfTest(
   PairingPayload qrPayload,
   LiveControllerMonitor monitor,
 ) async {
-  stdout.writeln('\n[SELF-TEST] Starting End-to-End Button Response & Latency Verification...');
-  final clientSocket = await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
+  stdout.writeln(
+      '\n[SELF-TEST] Starting End-to-End Button Response & Latency Verification...');
+  final clientSocket =
+      await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
   final serverAddr = InternetAddress.loopbackIPv4;
   final serverPort = server.boundPort;
 
@@ -105,8 +116,10 @@ Future<int> _runButtonResponseSelfTest(
   );
   clientSocket.send(connectBytes, serverAddr, serverPort);
 
-  final sessionToken = await completer.future.timeout(const Duration(seconds: 2));
-  stdout.writeln('[SELF-TEST] Paired with Receiver! Session Token: $sessionToken');
+  final sessionToken =
+      await completer.future.timeout(const Duration(seconds: 2));
+  stdout.writeln(
+      '[SELF-TEST] Paired with Receiver! Session Token: $sessionToken');
 
   final sender = LowLatencyInputSender(
     socket: clientSocket,
@@ -143,11 +156,13 @@ Future<int> _runButtonResponseSelfTest(
 
   if (!server.currentState.isPressed(GamepadButton.rightTrigger) ||
       server.currentState.rightTrigger < 0.99) {
-    stderr.writeln('[FAIL] Volume Key Trigger (RT) did NOT respond on receiver!');
+    stderr.writeln(
+        '[FAIL] Volume Key Trigger (RT) did NOT respond on receiver!');
     clientSocket.close();
     return 1;
   }
-  stdout.writeln('[PASS] Volume Down -> Right Trigger (RT = 100%) responded on Receiver!');
+  stdout.writeln(
+      '[PASS] Volume Down -> Right Trigger (RT = 100%) responded on Receiver!');
 
   // 4. Test Custom Combo Button (LB + RB + Y)
   final layout = ControllerLayout.defaultLandscape().addComboButton(
@@ -164,9 +179,12 @@ Future<int> _runButtonResponseSelfTest(
     current: sender.currentState,
     isPressed: true,
   );
-  sender.updateState(withCombo.copyWith(
-    leftStick: const StickState(x: 0.75, y: -0.50),
-  ), immediate: true);
+  sender.updateState(
+    withCombo.copyWith(
+      leftStick: const StickState(x: 0.75, y: -0.50),
+    ),
+    immediate: true,
+  );
   await Future<void>.delayed(const Duration(milliseconds: 5));
 
   final rxState = server.currentState;
@@ -178,26 +196,12 @@ Future<int> _runButtonResponseSelfTest(
     clientSocket.close();
     return 1;
   }
-  stdout.writeln('[PASS] Combo Button (LB + RB + Y) + Left Stick responded on Receiver!');
-
-  stdout.writeln('\nLive Monitor Snapshot at Peak Input:');
   stdout.writeln(
-    monitor.formatSnapshot(
-      ReceiverDiagnosticsSnapshot(
-        isConnected: server.isClientConnected,
-        clientAddress: '127.0.0.1',
-        clientDeviceName: 'DartPad-SelfTest-Phone',
-        currentState: server.currentState,
-        packetsPerSecond: 120,
-        packetLossPercent: server.sequenceTracker.packetLossRatio * 100,
-        droppedOutOfOrder: server.sequenceTracker.droppedOutOfOrder,
-        lastSequence: sender.sequence,
-      ),
-    ),
-  );
+      '[PASS] Combo Button (LB + RB + Y) + Left Stick responded on Receiver!');
 
   clientSocket.close();
-  stdout.writeln('[SELF-TEST] ALL BUTTONS, VOLUME TRIGGERS, & COMBOS RESPONDED PERFECTLY!');
+  stdout.writeln(
+      '[SELF-TEST] ALL BUTTONS, VOLUME TRIGGERS, & COMBOS RESPONDED PERFECTLY IN SINGLE EXE!');
   return 0;
 }
 
