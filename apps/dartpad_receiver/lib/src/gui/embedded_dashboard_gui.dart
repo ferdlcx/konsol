@@ -104,6 +104,16 @@ class EmbeddedDashboardGui {
       return;
     }
 
+    if (path == '/api/install-shortcut' && req.method == 'POST') {
+      final installed = await _installWindowsShortcutAndAutoStart();
+      req.response
+        ..statusCode = HttpStatus.ok
+        ..headers.contentType = ContentType.json
+        ..write(jsonEncode({'ok': installed}));
+      await req.response.close();
+      return;
+    }
+
     final pairingPayload = receiverServer.buildPairingPayload(localIp);
     final qrSvg = _renderQrSvg(pairingPayload);
 
@@ -156,10 +166,58 @@ class EmbeddedDashboardGui {
     // falling back to `start` if needed.
     Process.run(
       'cmd',
-      ['/c', 'start', '', 'msedge', '--app=$url', '--window-size=980,660'],
+      ['/c', 'start', '', 'msedge', '--app=$url', '--window-size=980,680'],
     ).catchError((_) {
       return Process.run('cmd', ['/c', 'start', '', url]);
     });
+  }
+
+  /// Installs `DartPad.exe` to `%LOCALAPPDATA%\Programs\DartPad\DartPad.exe`,
+  /// creates Desktop & Start Menu shortcuts, and enables Auto-Start on Windows boot.
+  static Future<bool> _installWindowsShortcutAndAutoStart() async {
+    if (!Platform.isWindows) return false;
+    try {
+      final exePath = Platform.resolvedExecutable;
+      final localAppData = Platform.environment['LOCALAPPDATA'] ?? '';
+      if (localAppData.isEmpty) return false;
+
+      final installDir = Directory('$localAppData\\Programs\\DartPad');
+      if (!installDir.existsSync()) {
+        installDir.createSync(recursive: true);
+      }
+      final targetExe = '${installDir.path}\\DartPad.exe';
+      if (exePath.toLowerCase() != targetExe.toLowerCase()) {
+        try {
+          File(exePath).copySync(targetExe);
+        } catch (_) {}
+      }
+      final finalExe = File(targetExe).existsSync() ? targetExe : exePath;
+
+      final psScript = '''
+\$WshShell = New-Object -ComObject WScript.Shell
+\$DesktopPath = [Environment]::GetFolderPath("Desktop")
+\$Shortcut = \$WshShell.CreateShortcut("\$DesktopPath\\DartPad Receiver.lnk")
+\$Shortcut.TargetPath = "$finalExe"
+\$Shortcut.WorkingDirectory = "${installDir.path}"
+\$Shortcut.Description = "DartPad Virtual Gamepad Receiver & GUI Dashboard"
+\$Shortcut.Save()
+
+\$StartMenuPath = [Environment]::GetFolderPath("Programs")
+\$SmShortcut = \$WshShell.CreateShortcut("\$StartMenuPath\\DartPad Receiver.lnk")
+\$SmShortcut.TargetPath = "$finalExe"
+\$SmShortcut.WorkingDirectory = "${installDir.path}"
+\$SmShortcut.Save()
+
+Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "DartPadReceiver" -Value '"\$($finalExe)"'
+''';
+      final res = await Process.run(
+        'powershell',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', psScript],
+      );
+      return res.exitCode == 0;
+    } catch (_) {
+      return false;
+    }
   }
 
   static String _buildDashboardHtml(PairingPayload payload, String qrSvg) {
@@ -190,7 +248,8 @@ class EmbeddedDashboardGui {
   .qr-box { display: flex; flex-direction: column; align-items: center; background: #0e131b; padding: 16px; border-radius: 12px; margin-bottom: 14px; }
   .pin-code { font-size: 28px; font-weight: 900; letter-spacing: 5px; color: var(--accent); margin-top: 10px; }
   .info-row { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; border-bottom: 1px solid #1c2432; }
-  .btn { width: 100%; margin-top: 14px; padding: 11px; border: none; border-radius: 10px; background: var(--pink); color: #fff; font-weight: 700; cursor: pointer; font-size: 13px; transition: 0.15s; }
+  .btn { width: 100%; margin-top: 10px; padding: 11px; border: none; border-radius: 10px; background: var(--pink); color: #fff; font-weight: 700; cursor: pointer; font-size: 13px; transition: 0.15s; }
+  .btn.secondary { background: #1e293b; border: 1px solid var(--accent); color: var(--accent); }
   .btn:hover { opacity: 0.9; transform: translateY(-1px); }
   .controller-stage { display: flex; flex-direction: column; gap: 16px; }
   .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -210,12 +269,12 @@ class EmbeddedDashboardGui {
 </head>
 <body>
   <div class="header">
-    <div class="title">DARTPAD RECEIVER DASHBOARD (SINGLE EXE)</div>
-    <div id="connBadge" class="badge">WAITING FOR PHONE...</div>
+    <div class="title">DARTPAD RECEIVER DASHBOARD (AUTO-PAIR Wi-Fi & USB)</div>
+    <div id="connBadge" class="badge">WAITING FOR PHONE (AUTO-PAIR READY)...</div>
   </div>
   <div class="grid">
     <div class="card">
-      <h2>Scan QR / PIN Pairing</h2>
+      <h2>Auto-Pair / QR / PIN</h2>
       <div class="qr-box">
         $qrSvg
         <div class="pin-code">${payload.pin}</div>
@@ -224,6 +283,7 @@ class EmbeddedDashboardGui {
       <div class="info-row"><span>UDP Port</span><strong>${payload.port}</strong></div>
       <div class="info-row"><span>Nama PC</span><strong>${payload.deviceName}</strong></div>
       <button class="btn" onclick="testRumble()">Test Getar (Rumble) ke HP</button>
+      <button id="installBtn" class="btn secondary" onclick="installShortcut()">📌 Pasang Shortcut Desktop & Auto-Start</button>
     </div>
 
     <div class="card controller-stage">
@@ -235,7 +295,7 @@ class EmbeddedDashboardGui {
       </div>
 
       <div>
-        <div style="font-size:12px;color:#8496ae;margin-bottom:6px;">TOMBOL AKTIF (Single, Combo, & Volume Trigger):</div>
+        <div style="font-size:12px;color:#8496ae;margin-bottom:6px;">TOMBOL AKTIF (Single, Combo (1) X→Y→A→A, & Volume Trigger):</div>
         <div id="btnContainer" class="buttons-grid"></div>
       </div>
 
@@ -281,7 +341,7 @@ ws.onmessage = (ev) => {
     badge.textContent = 'TERHUBUNG: ' + (data.clientDeviceName || 'Android') + ' (' + (data.clientAddress || '') + ')';
   } else {
     badge.className = 'badge';
-    badge.textContent = 'WAITING FOR PHONE...';
+    badge.textContent = 'WAITING FOR PHONE (AUTO-PAIR READY)...';
   }
   document.getElementById('ppsVal').textContent = data.packetsPerSecond + ' Hz';
   document.getElementById('lossVal').textContent = data.packetLossPercent.toFixed(1) + '%';
@@ -311,6 +371,16 @@ ws.onmessage = (ev) => {
 
 function testRumble() {
   fetch('/api/rumble', { method: 'POST' });
+}
+
+async function installShortcut() {
+  const btn = document.getElementById('installBtn');
+  btn.textContent = 'Memasang Shortcut & Auto-Start...';
+  const res = await fetch('/api/install-shortcut', { method: 'POST' });
+  const json = await res.json();
+  btn.textContent = json.ok
+    ? '✅ Shortcut Desktop & Auto-Start Terpasang!'
+    : '⚠️ Hanya tersedia di Windows';
 }
 </script>
 </body>
