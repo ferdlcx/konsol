@@ -2,7 +2,7 @@
 ; Produces a single, one-click Windows Setup Wizard: DartPad-Setup.exe
 
 #define MyAppName "DartPad Receiver"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "ferdlcx"
 #define MyAppURL "https://github.com/ferdlcx/konsol"
 #define MyAppExeName "DartPad.exe"
@@ -18,7 +18,7 @@ AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={autopf}\DartPad
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-; Install for current user by default (no annoying UAC Admin prompt required!)
+; Install for current user by default (can overwrite existing DartPad.exe cleanly!)
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=..\..\..\release-output
@@ -54,4 +54,7 @@ Root: HKCU; Subkey: "Software\Classes\dartpad\DefaultIcon"; ValueType: string; V
 Root: HKCU; Subkey: "Software\Classes\dartpad\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 [Run]
+; Allow UDP 42100 & TCP 42101 in Windows Firewall so HP <-> PC Auto-Pair & QR work cleanly
+Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""DartPad Receiver UDP"" dir=in action=allow protocol=UDP localport=42100 profile=any"; Flags: runhidden; StatusMsg: "Mengatur izin Firewall UDP 42100..."
+Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""DartPad Receiver TCP"" dir=in action=allow protocol=TCP localport=42101 profile=any"; Flags: runhidden; StatusMsg: "Mengatur izin Firewall TCP 42101..."
 Filename: "{app}\{#MyAppExeName}"; Description: "Jalankan {#MyAppName} (GUI Dashboard) sekarang"; Flags: nowait postinstall skipifsilent

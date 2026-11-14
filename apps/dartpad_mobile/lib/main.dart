@@ -3,8 +3,8 @@ import 'package:dartpad_protocol/dartpad_protocol.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'src/screens/connection_screen.dart';
 import 'src/screens/controller_screen.dart';
+import 'src/screens/dashboard_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,7 +20,7 @@ class DartPadMobileApp extends StatefulWidget {
 
 class _DartPadMobileAppState extends State<DartPadMobileApp> {
   late final MobileControllerEngine _engine;
-  bool _showConnectionScreen = false;
+  bool _showController = false;
 
   @override
   void initState() {
@@ -78,18 +78,35 @@ class _DartPadMobileAppState extends State<DartPadMobileApp> {
           secondary: Color(themePreset.accentHex),
         ),
       ),
-      home: _showConnectionScreen
-          ? ConnectionScreen(
+      home: _showController
+          ? ControllerScreen(
               engine: _engine,
-              onBackToController: () {
-                setState(() => _showConnectionScreen = false);
+              onBackToDashboard: () {
+                setState(() => _showController = false);
+              },
+              onSettingsChanged: () {
+                if (mounted) setState(() {});
               },
             )
-          : ControllerScreen(
-              engine: _engine,
-              onOpenConnectionScreen: () {
-                setState(() => _showConnectionScreen = true);
-              },
+          : Builder(
+              builder: (ctx) => DashboardScreen(
+                engine: _engine,
+                onOpenController: () {
+                  setState(() => _showController = true);
+                },
+                onOpenSettings: () {
+                  ControllerScreen.showSettingsDialog(
+                    context: ctx,
+                    engine: _engine,
+                    onChanged: () {
+                      if (mounted) setState(() {});
+                    },
+                  );
+                },
+                onSettingsChanged: () {
+                  if (mounted) setState(() {});
+                },
+              ),
             ),
     );
   }

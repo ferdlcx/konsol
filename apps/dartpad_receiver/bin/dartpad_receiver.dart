@@ -46,19 +46,32 @@ Future<void> main(List<String> args) async {
         isSelfTest ? InternetAddress.loopbackIPv4 : InternetAddress.anyIPv4,
   );
 
-  final localIp = await _detectLocalIpv4() ?? '127.0.0.1';
-  final qrPayload = server.buildPairingPayload(localIp);
+  final allIps = await _detectAllPhysicalIpv4s();
+  final primaryIp = allIps.isNotEmpty ? allIps.first : '127.0.0.1';
 
   gui = EmbeddedDashboardGui(
     receiverServer: server,
-    localIp: localIp,
+    localIp: primaryIp,
+    allIps: allIps,
+    preferredPort: isSelfTest ? 0 : 42101,
   );
-  await gui.start(openDesktopWindow: !isSelfTest);
+  await gui.start(
+    openDesktopWindow: !isSelfTest,
+    bindLoopbackOnly: isSelfTest,
+  );
+  server.advertisedHttpPort = gui.guiPort;
+
+  final qrPayload = server.buildPairingPayload(
+    primaryIp,
+    allIps: allIps,
+    httpPort: gui.guiPort,
+  );
 
   stdout.writeln('====================================================================');
-  stdout.writeln(' DARTPAD WINDOWS LAUNCHER (SINGLE .EXE + GUI DASHBOARD)');
+  stdout.writeln(' DARTPAD WINDOWS LAUNCHER v${DartPadAppSettings.appVersion} (SINGLE .EXE + GUI DASHBOARD)');
   stdout.writeln(' GUI Window : ${gui.dashboardUrl}');
-  stdout.writeln(' Local IP   : $localIp:${server.boundPort}');
+  stdout.writeln(' Local IPs  : ${allIps.isEmpty ? primaryIp : allIps.join(", ")}');
+  stdout.writeln(' UDP / HTTP : ${server.boundPort} / ${gui.guiPort}');
   stdout.writeln(' PIN Code   : ${server.pairingPin}');
   stdout.writeln(' QR URI     : ${qrPayload.toQrUriString()}');
   stdout.writeln('--------------------------------------------------------------------');
@@ -205,17 +218,40 @@ Future<int> _runButtonResponseSelfTest(
   return 0;
 }
 
-Future<String?> _detectLocalIpv4() async {
+/// Detects all active LAN/Wi-Fi/USB IPv4 addresses, ranking physical LAN/Wi-Fi
+/// ahead of virtual adapters (WSL, Hyper-V, VirtualBox, Docker) so QR & discovery
+/// never get stuck pointing to an unreachable virtual interface.
+Future<List<String>> _detectAllPhysicalIpv4s() async {
+  final preferred = <String>[];
+  final secondary = <String>[];
   try {
     final interfaces = await NetworkInterface.list(
       type: InternetAddressType.IPv4,
       includeLoopback: false,
     );
     for (final iface in interfaces) {
+      final lowerName = iface.name.toLowerCase();
+      final isVirtual = lowerName.contains('vethernet') ||
+          lowerName.contains('wsl') ||
+          lowerName.contains('hyper-v') ||
+          lowerName.contains('virtualbox') ||
+          lowerName.contains('vmware') ||
+          lowerName.contains('docker') ||
+          lowerName.contains('loopback') ||
+          lowerName.contains('tailscale');
+
       for (final addr in iface.addresses) {
-        if (!addr.isLoopback) return addr.address;
+        final ip = addr.address;
+        if (addr.isLoopback || ip.startsWith('169.254.')) continue;
+        final isVirtualRange =
+            ip.startsWith('192.168.56.') || ip.startsWith('172.');
+        if (!isVirtual && !isVirtualRange) {
+          if (!preferred.contains(ip)) preferred.add(ip);
+        } else {
+          if (!secondary.contains(ip)) secondary.add(ip);
+        }
       }
     }
   } catch (_) {}
-  return null;
+  return [...preferred, ...secondary];
 }

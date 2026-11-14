@@ -318,5 +318,38 @@ void main() {
         await tempDir.delete(recursive: true);
       }
     });
+
+    test('Multi-IP PairingPayload connects via fallback candidate IP when primary IP is unreachable', () async {
+      final server = DartPadReceiverServer(
+        port: 0,
+        serverName: 'DualNic-PC',
+        gamepadProvider: SimulatedGamepadProvider(),
+        customPin: '998877',
+      );
+      await server.start(bindAddress: InternetAddress.loopbackIPv4);
+
+      final engine = MobileControllerEngine();
+      try {
+        // Primary IP is a non-routable / dead virtual adapter IP, second IP is live 127.0.0.1
+        final payload = PairingPayload(
+          ip: '192.0.2.55',
+          allIps: const ['192.0.2.55', '127.0.0.1'],
+          port: server.boundPort,
+          pin: '998877',
+          deviceName: 'DualNic-PC',
+        );
+
+        final ok = await engine.connectWithPayload(
+          payload,
+          timeout: const Duration(seconds: 2),
+        );
+        expect(ok, isTrue);
+        expect(engine.connectedServerIp, equals('127.0.0.1'));
+        expect(engine.connectedServerName, equals('DualNic-PC'));
+      } finally {
+        await engine.disconnect();
+        await server.stop();
+      }
+    });
   });
 }

@@ -170,7 +170,7 @@ class DartPadAppSettings {
           ((json['globalScale'] as num?)?.toDouble() ?? 1.0).clamp(0.55, 1.65),
       activeProfileId: (json['activeProfileId'] as String?) ?? 'xbox_default',
       activeLayoutId:
-          (json['activeLayoutId'] as String?) ?? 'xbox_authentic_landscape',
+          (json['activeLayoutId'] as String?) ?? 'xbox_authentic_v2',
       lastConnectedIp: json['lastConnectedIp'] as String?,
       lastConnectedPort: (json['lastConnectedPort'] as int?) ?? 42100,
       lastPairedPin: json['lastPairedPin'] as String?,
@@ -189,12 +189,14 @@ class DartPadConfigStore {
   /// Resolves a persistent user data directory on Android, Windows, or Linux
   /// without requiring external native plugins.
   factory DartPadConfigStore.defaultPersistentStore({
-    String androidPackageName = 'com.ferdlcx.dartpad',
+    String androidPackageName = 'com.ferdlcx.dartpad.dartpad_mobile',
   }) {
     if (Platform.isAndroid) {
       final candidates = [
         Directory('/data/user/0/$androidPackageName/files/DartPad'),
         Directory('/data/data/$androidPackageName/files/DartPad'),
+        Directory('/data/user/0/com.ferdlcx.dartpad/files/DartPad'),
+        Directory('/data/data/com.ferdlcx.dartpad/files/DartPad'),
       ];
       for (final dir in candidates) {
         try {
@@ -235,7 +237,7 @@ class DartPadConfigStore {
       }
 
       final landscapeFile =
-          File('${layoutsDir.path}/xbox_authentic_landscape.json');
+          File('${layoutsDir.path}/xbox_authentic_v2.json');
       if (!await landscapeFile.exists()) {
         await saveLayout(ControllerLayout.defaultLandscape());
       }

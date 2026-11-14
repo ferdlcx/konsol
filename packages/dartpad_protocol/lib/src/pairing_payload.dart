@@ -4,31 +4,52 @@ import 'packet_codec.dart';
 /// Receiver and scanned by the Android Mobile Controller.
 ///
 /// Format URI:
-/// `dartpad://connect?ip=192.168.1.10&port=42100&pin=482910&name=GAMING-PC`
+/// `dartpad://connect?ip=192.168.1.10&ips=192.168.1.10,192.168.137.1&port=42100&http=42101&pin=482910&name=GAMING-PC`
 class PairingPayload {
   static const String scheme = 'dartpad';
   static const String host = 'connect';
 
   final String ip;
+  final List<String> allIps;
   final int port;
+  final int httpPort;
   final String pin;
   final String deviceName;
 
   const PairingPayload({
     required this.ip,
+    this.allIps = const [],
     this.port = DartPadProtocolConstants.defaultPort,
+    this.httpPort = 42101,
     required this.pin,
     required this.deviceName,
   });
 
+  /// Returns a deduplicated list of all reachable candidate IPv4 addresses for this PC,
+  /// prioritizing [ip] first, followed by [allIps].
+  List<String> get candidateIps {
+    final result = <String>[];
+    if (ip.trim().isNotEmpty) result.add(ip.trim());
+    for (final alt in allIps) {
+      final clean = alt.trim();
+      if (clean.isNotEmpty && !result.contains(clean)) {
+        result.add(clean);
+      }
+    }
+    return result;
+  }
+
   /// Converts this pairing payload into a compact URI string suitable for QR code encoding.
   String toQrUriString() {
+    final ips = candidateIps;
     return Uri(
       scheme: scheme,
       host: host,
       queryParameters: {
         'ip': ip,
+        if (ips.length > 1) 'ips': ips.join(','),
         'port': port.toString(),
+        if (httpPort != 42101) 'http': httpPort.toString(),
         'pin': pin,
         'name': deviceName,
       },
@@ -38,31 +59,46 @@ class PairingPayload {
   /// Parses a scanned QR code string into a [PairingPayload].
   /// Throws [FormatException] if the QR code is not a valid DartPad pairing URI.
   factory PairingPayload.fromQrUriString(String rawUri) {
-    final uri = Uri.tryParse(rawUri.trim());
-    if (uri == null || uri.scheme != scheme || uri.host != host) {
-      throw FormatException('Invalid DartPad QR URI: $rawUri');
+    final cleaned = rawUri.trim();
+    final uri = Uri.tryParse(cleaned);
+    if (uri == null || uri.scheme.toLowerCase() != scheme || uri.host.toLowerCase() != host) {
+      throw FormatException('QR URI tidak valid: "$cleaned" (harus diawali dartpad://connect?...)');
     }
 
-    final ip = uri.queryParameters['ip'];
-    final portStr = uri.queryParameters['port'];
-    final pin = uri.queryParameters['pin'];
-    final name = uri.queryParameters['name'] ?? 'Windows PC';
+    final ip = uri.queryParameters['ip']?.trim();
+    final ipsParam = uri.queryParameters['ips']?.trim();
+    final portStr = uri.queryParameters['port']?.trim();
+    final httpStr = uri.queryParameters['http']?.trim();
+    final pin = uri.queryParameters['pin']?.trim();
+    final name = uri.queryParameters['name']?.trim() ?? 'Windows PC';
 
-    if (ip == null || ip.isEmpty) {
-      throw const FormatException('Missing "ip" in DartPad QR URI');
+    final parsedAllIps = <String>[
+      if (ip != null && ip.isNotEmpty) ip,
+      if (ipsParam != null && ipsParam.isNotEmpty)
+        ...ipsParam.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty),
+    ];
+
+    if (parsedAllIps.isEmpty) {
+      throw const FormatException('Alamat IP PC tidak ditemukan di QR URI.');
     }
     if (pin == null || pin.isEmpty) {
-      throw const FormatException('Missing "pin" in DartPad QR URI');
+      throw const FormatException('PIN Pairing tidak ditemukan di QR URI.');
     }
 
-    final port = portStr != null ? int.tryParse(portStr) : DartPadProtocolConstants.defaultPort;
+    final port = portStr != null
+        ? int.tryParse(portStr)
+        : DartPadProtocolConstants.defaultPort;
     if (port == null || port <= 0 || port > 65535) {
-      throw FormatException('Invalid "port" in DartPad QR URI: $portStr');
+      throw FormatException('Port UDP tidak valid di QR URI: $portStr');
     }
+
+    final httpPort = httpStr != null ? (int.tryParse(httpStr) ?? 42101) : 42101;
 
     return PairingPayload(
-      ip: ip,
+      ip: parsedAllIps.first,
+      allIps: parsedAllIps,
       port: port,
+      httpPort: httpPort,
       pin: pin,
       deviceName: name,
     );

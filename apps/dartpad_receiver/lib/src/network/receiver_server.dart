@@ -84,11 +84,19 @@ class DartPadReceiverServer {
   SequenceTracker get sequenceTracker => _sequenceTracker;
   int get boundPort => _socket?.port ?? port;
 
-  /// Generates the [PairingPayload] (for QR Code & manual pairing) for a given local IP.
-  PairingPayload buildPairingPayload(String localIp) {
+  int advertisedHttpPort = 42101;
+
+  /// Generates the [PairingPayload] (for QR Code & manual pairing) for local PC IPs.
+  PairingPayload buildPairingPayload(
+    String localIp, {
+    List<String> allIps = const [],
+    int httpPort = 42101,
+  }) {
     return PairingPayload(
       ip: localIp,
+      allIps: allIps,
       port: boundPort,
+      httpPort: httpPort,
       pin: _pairingPin,
       deviceName: serverName,
     );
@@ -218,6 +226,7 @@ class DartPadReceiverServer {
               payload: {
                 'serverName': serverName,
                 'port': boundPort,
+                'httpPort': advertisedHttpPort,
                 'pin': _pairingPin,
               },
             ),

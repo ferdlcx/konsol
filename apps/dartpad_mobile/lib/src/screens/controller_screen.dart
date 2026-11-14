@@ -9,13 +9,280 @@ import '../widgets/virtual_joystick.dart';
 /// Responsive, Anti-Overlap Xbox-Style Controller & Layout/Combo Editor Screen.
 class ControllerScreen extends StatefulWidget {
   final MobileControllerEngine engine;
-  final VoidCallback onOpenConnectionScreen;
+  final VoidCallback onBackToDashboard;
+  final VoidCallback onSettingsChanged;
 
   const ControllerScreen({
     super.key,
     required this.engine,
-    required this.onOpenConnectionScreen,
+    required this.onBackToDashboard,
+    required this.onSettingsChanged,
   });
+
+  /// Shared Settings, Theme, Global Scale, & Release Info dialog callable from
+  /// both DashboardScreen and ControllerScreen.
+  static Future<void> showSettingsDialog({
+    required BuildContext context,
+    required MobileControllerEngine engine,
+    required VoidCallback onChanged,
+  }) async {
+    var settings = engine.settings;
+    var deadzone = engine.profile.deadzone;
+    var sensitivity = engine.profile.sensitivity;
+    var volTriggers = engine.profile.enableVolumeKeysAsTriggers;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final theme = settings.themePreset;
+
+            void persistAll() {
+              final curr = engine.profile;
+              engine.setProfile(
+                ControllerProfile(
+                  id: curr.id,
+                  name: curr.name,
+                  type: curr.type,
+                  deadzone: deadzone,
+                  sensitivity: sensitivity,
+                  buttonLabels: curr.buttonLabels,
+                  enableVolumeKeysAsTriggers: volTriggers,
+                  hardwareKeyBindings: curr.hardwareKeyBindings,
+                ),
+              );
+              engine.updateSettings(settings);
+              onChanged();
+            }
+
+            return AlertDialog(
+              backgroundColor: Color(theme.panelHex),
+              title: Row(
+                children: [
+                  Icon(Icons.settings, color: Color(theme.accentHex)),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Settings, Theme & Release Info',
+                      style: TextStyle(color: Colors.white, fontSize: 16),
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 480,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Tema Tampilan (Theme):',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13),
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          for (final preset in DartPadThemePreset.values)
+                            ChoiceChip(
+                              label: Text(preset.name,
+                                  style: const TextStyle(fontSize: 11)),
+                              selected: settings.themeId == preset.id,
+                              selectedColor: Color(preset.primaryHex),
+                              onSelected: (_) {
+                                setDialogState(() {
+                                  settings =
+                                      settings.copyWith(themeId: preset.id);
+                                });
+                                persistAll();
+                              },
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          const SizedBox(
+                            width: 145,
+                            child: Text('Ukuran Global Tombol:',
+                                style: TextStyle(
+                                    color: Colors.white70, fontSize: 12)),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              value:
+                                  settings.globalScale.clamp(0.6, 1.5).toDouble(),
+                              min: 0.6,
+                              max: 1.5,
+                              activeColor: Color(theme.accentHex),
+                              onChanged: (val) {
+                                setDialogState(() {
+                                  settings =
+                                      settings.copyWith(globalScale: val);
+                                });
+                                persistAll();
+                              },
+                            ),
+                          ),
+                          Text('${(settings.globalScale * 100).round()}%',
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 12)),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          const SizedBox(
+                            width: 145,
+                            child: Text('Deadzone Analog:',
+                                style: TextStyle(
+                                    color: Colors.white70, fontSize: 12)),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              value: deadzone.clamp(0.0, 0.35).toDouble(),
+                              min: 0.0,
+                              max: 0.35,
+                              activeColor: Color(theme.accentHex),
+                              onChanged: (val) {
+                                setDialogState(() => deadzone = val);
+                                persistAll();
+                              },
+                            ),
+                          ),
+                          Text('${(deadzone * 100).round()}%',
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 12)),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          const SizedBox(
+                            width: 145,
+                            child: Text('Sensitivity Analog:',
+                                style: TextStyle(
+                                    color: Colors.white70, fontSize: 12)),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              value: sensitivity.clamp(0.5, 2.0).toDouble(),
+                              min: 0.5,
+                              max: 2.0,
+                              activeColor: Color(theme.accentHex),
+                              onChanged: (val) {
+                                setDialogState(() => sensitivity = val);
+                                persistAll();
+                              },
+                            ),
+                          ),
+                          Text('${(sensitivity * 100).round()}%',
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 12)),
+                        ],
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text(
+                          'Auto-Pair & Auto-Reconnect (Wi-Fi & USB Tethering)',
+                          style: TextStyle(color: Colors.white, fontSize: 12),
+                        ),
+                        subtitle: const Text(
+                          'Otomatis cari PC & simpan koneksi walaupun HP/PC dimatikan',
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
+                        value: settings.autoPairEnabled,
+                        activeColor: Color(theme.accentHex),
+                        onChanged: (val) {
+                          setDialogState(() {
+                            settings = settings.copyWith(autoPairEnabled: val);
+                          });
+                          persistAll();
+                        },
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text(
+                          'Tombol Volume HP sebagai Trigger (LT / RT)',
+                          style: TextStyle(color: Colors.white, fontSize: 12),
+                        ),
+                        value: volTriggers,
+                        activeColor: Color(theme.accentHex),
+                        onChanged: (val) {
+                          setDialogState(() => volTriggers = val);
+                          persistAll();
+                        },
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text(
+                          'Getar / Haptic & Force Feedback (Rumble)',
+                          style: TextStyle(color: Colors.white, fontSize: 12),
+                        ),
+                        value: settings.hapticFeedback,
+                        activeColor: Color(theme.accentHex),
+                        onChanged: (val) {
+                          setDialogState(() {
+                            settings = settings.copyWith(hapticFeedback: val);
+                          });
+                          persistAll();
+                        },
+                      ),
+                      const Divider(color: Colors.white24),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.black26,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.white12),
+                        ),
+                        child: const Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Release Info — DartPad v${DartPadAppSettings.appVersion}',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              '• Layout Bawaan: Xbox Big Controls (LS, XYAB, LT/LB/RB/RT 2x Lebih Besar)\n'
+                              '• Combo Macro: Instan & Urutan Milidetik ((1) X→Y→A→A)\n'
+                              '• Scan QR Kamera Google ML Kit + Subnet Sweep Wi-Fi LAN & USB\n'
+                              '• Release & Update: github.com/ferdlcx/konsol/releases',
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                ElevatedButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Tutup & Simpan'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
 
   @override
   State<ControllerScreen> createState() => _ControllerScreenState();
@@ -85,8 +352,8 @@ class _ControllerScreenState extends State<ControllerScreen> {
     setState(() {});
   }
 
-  /// Shows the Top-Center Close / Exit / Quick Menu dialog so pressing back or
-  /// the center-top close button doesn't abruptly kill the app without choice.
+  /// Shows the Top-Center Close / Dashboard / Quick Menu dialog so pressing back or
+  /// the center-top close button cleanly returns to Dashboard Mobile without killing APK.
   void _openCloseMenuDialog() {
     final theme = widget.engine.settings.themePreset;
     showDialog<void>(
@@ -103,18 +370,22 @@ class _ControllerScreenState extends State<ControllerScreen> {
             children: [
               ListTile(
                 leading:
-                    Icon(Icons.usb_rounded, color: Color(theme.accentHex)),
-                title: const Text('Pairing Otomatis (Wi-Fi / USB) & QR',
-                    style: TextStyle(color: Colors.white, fontSize: 14)),
+                    Icon(Icons.dashboard, color: Color(theme.accentHex)),
+                title: const Text('Kembali ke Dashboard Mobile',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold)),
                 subtitle: Text(
                   widget.engine.isConnected
                       ? 'Terhubung ke ${widget.engine.connectedServerName}'
-                      : 'Scan otomatis PC di jaringan / USB Tethering',
+                      : 'Scan QR Kamera, Auto-Pair Wi-Fi / USB, Cek Update',
                   style: const TextStyle(color: Colors.white60, fontSize: 12),
                 ),
                 onTap: () {
                   Navigator.of(ctx).pop();
-                  widget.onOpenConnectionScreen();
+                  widget.engine.releaseAllInputs();
+                  widget.onBackToDashboard();
                 },
               ),
               ListTile(
@@ -131,7 +402,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
               ListTile(
                 leading:
                     const Icon(Icons.exit_to_app, color: Colors.redAccent),
-                title: const Text('Keluar dari Aplikasi (Exit APK)',
+                title: const Text('Keluar Total dari APK',
                     style: TextStyle(
                         color: Colors.redAccent,
                         fontSize: 14,
@@ -155,270 +426,13 @@ class _ControllerScreenState extends State<ControllerScreen> {
     );
   }
 
-  /// Opens the complete Settings dialog: Theme selector, Global Scale (Besar-Kecil),
-  /// Deadzone, Sensitivity, Volume Trigger, Auto-Pair, and Release Info.
   void _openSettingsAndReleaseInfoDialog() {
-    var settings = widget.engine.settings;
-    var deadzone = widget.engine.profile.deadzone;
-    var sensitivity = widget.engine.profile.sensitivity;
-    var volTriggers = widget.engine.profile.enableVolumeKeysAsTriggers;
-
-    showDialog<void>(
+    ControllerScreen.showSettingsDialog(
       context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) {
-            final theme = settings.themePreset;
-
-            void persistAll() {
-              final curr = widget.engine.profile;
-              widget.engine.setProfile(
-                ControllerProfile(
-                  id: curr.id,
-                  name: curr.name,
-                  type: curr.type,
-                  deadzone: deadzone,
-                  sensitivity: sensitivity,
-                  buttonLabels: curr.buttonLabels,
-                  enableVolumeKeysAsTriggers: volTriggers,
-                  hardwareKeyBindings: curr.hardwareKeyBindings,
-                ),
-              );
-              widget.engine.updateSettings(settings);
-              setState(() {});
-            }
-
-            return AlertDialog(
-              backgroundColor: Color(theme.panelHex),
-              title: Row(
-                children: [
-                  Icon(Icons.settings, color: Color(theme.accentHex)),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Settings, Theme & Release Info',
-                    style: TextStyle(color: Colors.white, fontSize: 16),
-                  ),
-                ],
-              ),
-              content: SizedBox(
-                width: 480,
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // 1. Theme Selector
-                      const Text(
-                        'Tema Tampilan (Theme):',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13),
-                      ),
-                      const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
-                        children: [
-                          for (final preset in DartPadThemePreset.values)
-                            ChoiceChip(
-                              label: Text(preset.name,
-                                  style: const TextStyle(fontSize: 11)),
-                              selected: settings.themeId == preset.id,
-                              selectedColor: Color(preset.primaryHex),
-                              onSelected: (_) {
-                                setDialogState(() {
-                                  settings =
-                                      settings.copyWith(themeId: preset.id);
-                                });
-                                persistAll();
-                              },
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-
-                      // 2. Global Size Scale (Besar Kecil Semua Tombol)
-                      Row(
-                        children: [
-                          const SizedBox(
-                            width: 145,
-                            child: Text('Ukuran Global Tombol:',
-                                style: TextStyle(
-                                    color: Colors.white70, fontSize: 12)),
-                          ),
-                          Expanded(
-                            child: Slider(
-                              value: settings.globalScale.clamp(0.6, 1.5).toDouble(),
-                              min: 0.6,
-                              max: 1.5,
-                              activeColor: Color(theme.accentHex),
-                              onChanged: (val) {
-                                setDialogState(() {
-                                  settings =
-                                      settings.copyWith(globalScale: val);
-                                });
-                                persistAll();
-                              },
-                            ),
-                          ),
-                          Text('${(settings.globalScale * 100).round()}%',
-                              style: const TextStyle(
-                                  color: Colors.white, fontSize: 12)),
-                        ],
-                      ),
-
-                      // 3. Deadzone & Sensitivity
-                      Row(
-                        children: [
-                          const SizedBox(
-                            width: 145,
-                            child: Text('Deadzone Analog:',
-                                style: TextStyle(
-                                    color: Colors.white70, fontSize: 12)),
-                          ),
-                          Expanded(
-                            child: Slider(
-                              value: deadzone.clamp(0.0, 0.35).toDouble(),
-                              min: 0.0,
-                              max: 0.35,
-                              activeColor: Color(theme.accentHex),
-                              onChanged: (val) {
-                                setDialogState(() => deadzone = val);
-                                persistAll();
-                              },
-                            ),
-                          ),
-                          Text('${(deadzone * 100).round()}%',
-                              style: const TextStyle(
-                                  color: Colors.white, fontSize: 12)),
-                        ],
-                      ),
-                      Row(
-                        children: [
-                          const SizedBox(
-                            width: 145,
-                            child: Text('Sensitivity Analog:',
-                                style: TextStyle(
-                                    color: Colors.white70, fontSize: 12)),
-                          ),
-                          Expanded(
-                            child: Slider(
-                              value: sensitivity.clamp(0.5, 2.0).toDouble(),
-                              min: 0.5,
-                              max: 2.0,
-                              activeColor: Color(theme.accentHex),
-                              onChanged: (val) {
-                                setDialogState(() => sensitivity = val);
-                                persistAll();
-                              },
-                            ),
-                          ),
-                          Text('${(sensitivity * 100).round()}%',
-                              style: const TextStyle(
-                                  color: Colors.white, fontSize: 12)),
-                        ],
-                      ),
-
-                      // 4. Toggles (Auto-Pair, Volume Trigger, Haptic)
-                      SwitchListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text(
-                          'Auto-Pair & Auto-Reconnect (Wi-Fi & USB Tethering)',
-                          style: TextStyle(color: Colors.white, fontSize: 12),
-                        ),
-                        subtitle: const Text(
-                          'Otomatis cari PC & simpan koneksi walaupun HP/PC dimatikan',
-                          style: TextStyle(color: Colors.white54, fontSize: 11),
-                        ),
-                        value: settings.autoPairEnabled,
-                        activeColor: Color(theme.accentHex),
-                        onChanged: (val) {
-                          setDialogState(() {
-                            settings = settings.copyWith(autoPairEnabled: val);
-                          });
-                          persistAll();
-                        },
-                      ),
-                      SwitchListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text(
-                          'Tombol Volume HP sebagai Trigger (LT / RT)',
-                          style: TextStyle(color: Colors.white, fontSize: 12),
-                        ),
-                        value: volTriggers,
-                        activeColor: Color(theme.accentHex),
-                        onChanged: (val) {
-                          setDialogState(() => volTriggers = val);
-                          persistAll();
-                        },
-                      ),
-                      SwitchListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text(
-                          'Getar / Haptic & Force Feedback (Rumble)',
-                          style: TextStyle(color: Colors.white, fontSize: 12),
-                        ),
-                        value: settings.hapticFeedback,
-                        activeColor: Color(theme.accentHex),
-                        onChanged: (val) {
-                          setDialogState(() {
-                            settings = settings.copyWith(hapticFeedback: val);
-                          });
-                          persistAll();
-                        },
-                      ),
-                      const Divider(color: Colors.white24),
-
-                      // 5. Release Info Box
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.black26,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.white12),
-                        ),
-                        child: const Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Release Info — DartPad v${DartPadAppSettings.appVersion}',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                              ),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              '• Layout Bawaan: Xbox Series Asymmetric (Anti-Nabrak)\n'
-                              '• Combo Macro: Instan & Urutan Milidetik (mis. (1) X→Y→A→A)\n'
-                              '• Transmisi: Binary UDP 28-Byte @ 120Hz + 0ms Edge Trigger\n'
-                              '• Pairing: Otomatis via Wi-Fi LAN & USB Tethering + Simpan Persisten\n'
-                              '• Repo: github.com/ferdlcx/konsol',
-                              style: TextStyle(
-                                  color: Colors.white70, fontSize: 11),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                ElevatedButton(
-                  onPressed: () => Navigator.of(ctx).pop(),
-                  child: const Text('Tutup & Simpan'),
-                ),
-              ],
-            );
-          },
-        );
+      engine: widget.engine,
+      onChanged: () {
+        widget.onSettingsChanged();
+        if (mounted) setState(() {});
       },
     );
   }
@@ -751,14 +765,17 @@ class _ControllerScreenState extends State<ControllerScreen> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Connection / Auto-Pair Status Pill
+          // Connection / Dashboard Pill
           InkWell(
-            onTap: widget.onOpenConnectionScreen,
+            onTap: () {
+              widget.engine.releaseAllInputs();
+              widget.onBackToDashboard();
+            },
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  connected ? Icons.wifi_tethering : Icons.sync_rounded,
+                  connected ? Icons.wifi_tethering : Icons.dashboard_rounded,
                   size: 14,
                   color: connected
                       ? const Color(0xFF00E676)
@@ -768,7 +785,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                 Text(
                   connected
                       ? '${widget.engine.connectedServerName ?? "PC"} (${rtt}ms)'
-                      : 'AUTO-PAIR / USB',
+                      : 'DASHBOARD',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 11,
@@ -913,7 +930,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
     };
 
     final double scaledSize = (baseDimension * globalScale * item.scale)
-        .clamp(28.0, shortestSide * 0.48)
+        .clamp(28.0, shortestSide * 0.58)
         .toDouble();
     final double elemWidth = isBumperOrTrigger
         ? scaledSize * 1.48

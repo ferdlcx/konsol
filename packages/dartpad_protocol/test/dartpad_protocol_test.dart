@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:dartpad_protocol/dartpad_protocol.dart';
 import 'package:test/test.dart';
@@ -239,6 +240,92 @@ void main() {
       state = comboBtn.applyToState(current: state, isPressed: false);
       expect(state.buttons, isEmpty);
       expect(state.rightTrigger, equals(0.0));
+    });
+
+    test('multi-IP PairingPayload serializes ips & httpPort cleanly', () {
+      const payload = PairingPayload(
+        ip: '192.168.1.50',
+        allIps: ['192.168.1.50', '192.168.42.10', '192.168.1.50'],
+        port: 42100,
+        httpPort: 42101,
+        pin: '123456',
+        deviceName: 'MyPC',
+      );
+      expect(payload.candidateIps, equals(['192.168.1.50', '192.168.42.10']));
+
+      final parsed = PairingPayload.fromQrUriString(payload.toQrUriString());
+      expect(parsed.ip, equals('192.168.1.50'));
+      expect(parsed.httpPort, equals(42101));
+      expect(parsed.candidateIps, equals(['192.168.1.50', '192.168.42.10']));
+    });
+
+    test('xbox_authentic_v2 layout enlarges LS, XYAB, and bumpers with zero element overlap across viewports', () {
+      final layout = ControllerLayout.defaultLandscape(preset: ControllerType.xbox);
+      expect(layout.id, equals('xbox_authentic_v2'));
+
+      final ls = layout.items.firstWhere((e) => e.id == 'left_stick');
+      final aBtn = layout.items.firstWhere((e) => e.id == 'btn_south');
+      final ltBtn = layout.items.firstWhere((e) => e.id == 'btn_lt');
+      expect(ls.scale, greaterThanOrEqualTo(1.4));
+      expect(aBtn.scale, greaterThanOrEqualTo(1.6));
+      expect(ltBtn.scale, greaterThanOrEqualTo(1.4));
+
+      // Verify zero pairwise overlap on typical Android landscape viewports
+      for (final viewport in const [
+        (w: 680.0, h: 360.0),
+        (w: 800.0, h: 360.0),
+        (w: 915.0, h: 412.0),
+      ]) {
+        final w = viewport.w;
+        final h = viewport.h;
+        final shortest = math.min(w, h);
+        final rects = <({String id, double l, double t, double r, double b})>[];
+
+        for (final item in layout.items) {
+          final isBumper = item.id == 'btn_lt' ||
+              item.id == 'btn_lb' ||
+              item.id == 'btn_rb' ||
+              item.id == 'btn_rt';
+          final base = switch (item.type) {
+            LayoutElementType.leftJoystick ||
+            LayoutElementType.rightJoystick =>
+              shortest * 0.29,
+            LayoutElementType.dpad => shortest * 0.26,
+            LayoutElementType.comboButton => shortest * 0.13,
+            LayoutElementType.singleButton => shortest * 0.13,
+          };
+          final scaled =
+              (base * 1.0 * item.scale).clamp(28.0, shortest * 0.58).toDouble();
+          final ew = isBumper
+              ? scaled * 1.48
+              : (item.isCombo ? scaled * 1.35 : scaled);
+          final eh = isBumper ? scaled * 0.78 : scaled;
+          final left = ((item.x * w) - (ew / 2))
+              .clamp(4.0, math.max(4.0, w - ew - 4.0))
+              .toDouble();
+          final top = ((item.y * h) - (eh / 2))
+              .clamp(4.0, math.max(4.0, h - eh - 4.0))
+              .toDouble();
+          rects.add((id: item.id, l: left, t: top, r: left + ew, b: top + eh));
+        }
+
+        for (var i = 0; i < rects.length; i++) {
+          for (var j = i + 1; j < rects.length; j++) {
+            final a = rects[i];
+            final b = rects[j];
+            final overlaps = a.l < b.r - 1.0 &&
+                a.r > b.l + 1.0 &&
+                a.t < b.b - 1.0 &&
+                a.b > b.t + 1.0;
+            expect(
+              overlaps,
+              isFalse,
+              reason:
+                  'Overlap detected on ${w.toInt()}x${h.toInt()} between ${a.id} ($a) and ${b.id} ($b)',
+            );
+          }
+        }
+      }
     });
   });
 }

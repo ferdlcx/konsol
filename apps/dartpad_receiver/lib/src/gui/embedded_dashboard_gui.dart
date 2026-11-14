@@ -7,18 +7,13 @@ import 'package:dartpad_protocol/dartpad_protocol.dart';
 import '../diagnostics/qr_pairing_renderer.dart';
 import '../network/receiver_server.dart';
 
-/// Embedded Desktop GUI Dashboard Server built directly into the single
-/// `DartPad.exe` binary.
-///
-/// When `DartPad.exe` starts on Windows, it binds a local loopback port and
-/// opens a native-style chromeless desktop window (`msedge --app=...`) with:
-/// - Scannable Graphical SVG QR Code + 6-digit PIN + IP address
-/// - Real-time WebSocket Interactive Controller Visualizer (every button,
-///   trigger, volume key, combo button, and 360° analog stick lights up live!)
-/// - One-click **"Test Getar (Rumble) ke HP"** button
+/// Embedded Desktop GUI Dashboard & HTTP Discovery API Server built directly into
+/// the single `DartPad.exe` binary.
 class EmbeddedDashboardGui {
   final DartPadReceiverServer receiverServer;
   final String localIp;
+  final List<String> allIps;
+  final int preferredPort;
 
   HttpServer? _httpServer;
   final Set<WebSocket> _clients = {};
@@ -26,18 +21,36 @@ class EmbeddedDashboardGui {
   EmbeddedDashboardGui({
     required this.receiverServer,
     required this.localIp,
+    this.allIps = const [],
+    this.preferredPort = 42101,
   });
 
   int get guiPort => _httpServer?.port ?? 0;
   String get dashboardUrl => 'http://127.0.0.1:$guiPort';
 
-  /// Starts the local GUI server and optionally launches a native-style desktop
-  /// window on Windows (`msedge --app=...` or default window).
-  Future<void> start({bool openDesktopWindow = true}) async {
-    _httpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  List<String> get _resolvedIps {
+    final ips = <String>[];
+    if (localIp.isNotEmpty) ips.add(localIp);
+    for (final ip in allIps) {
+      if (ip.isNotEmpty && !ips.contains(ip)) ips.add(ip);
+    }
+    return ips;
+  }
+
+  /// Starts the HTTP Discovery API + GUI server on `0.0.0.0:42101` (or ephemeral
+  /// fallback) and optionally opens the native desktop window on Windows.
+  Future<void> start({bool openDesktopWindow = true, bool bindLoopbackOnly = false}) async {
+    final bindAddr =
+        bindLoopbackOnly ? InternetAddress.loopbackIPv4 : InternetAddress.anyIPv4;
+    try {
+      _httpServer = await HttpServer.bind(bindAddr, preferredPort);
+    } catch (_) {
+      _httpServer = await HttpServer.bind(bindAddr, 0);
+    }
     _httpServer!.listen(_handleRequest);
 
     if (openDesktopWindow && Platform.isWindows) {
+      unawaited(fixWindowsFirewallAndUsbMetric(silent: true));
       _launchWindowsDesktopWindow(dashboardUrl);
     }
   }
@@ -74,7 +87,6 @@ class EmbeddedDashboardGui {
       final ws = await WebSocketTransformer.upgrade(req);
       _clients.add(ws);
       ws.done.then((_) => _clients.remove(ws));
-      // Send initial state immediately
       ws.add(
         jsonEncode(
           _snapshotToJson(
@@ -89,6 +101,27 @@ class EmbeddedDashboardGui {
           ),
         ),
       );
+      return;
+    }
+
+    // Discovery / Auto-Pair endpoint reachable from Android phone over Wi-Fi LAN & USB Tether!
+    if (path == '/api/info') {
+      req.response
+        ..statusCode = HttpStatus.ok
+        ..headers.contentType = ContentType.json
+        ..headers.add('Access-Control-Allow-Origin', '*')
+        ..write(
+          jsonEncode({
+            'app': 'DartPad',
+            'version': DartPadAppSettings.appVersion,
+            'serverName': receiverServer.serverName,
+            'udpPort': receiverServer.boundPort,
+            'httpPort': guiPort,
+            'ips': _resolvedIps,
+            'pin': receiverServer.pairingPin,
+          }),
+        );
+      await req.response.close();
       return;
     }
 
@@ -114,13 +147,27 @@ class EmbeddedDashboardGui {
       return;
     }
 
-    final pairingPayload = receiverServer.buildPairingPayload(localIp);
+    if (path == '/api/fix-network' && req.method == 'POST') {
+      final fixed = await fixWindowsFirewallAndUsbMetric(silent: false);
+      req.response
+        ..statusCode = HttpStatus.ok
+        ..headers.contentType = ContentType.json
+        ..write(jsonEncode({'ok': fixed}));
+      await req.response.close();
+      return;
+    }
+
+    final pairingPayload = receiverServer.buildPairingPayload(
+      localIp,
+      allIps: _resolvedIps,
+      httpPort: guiPort,
+    );
     final qrSvg = _renderQrSvg(pairingPayload);
 
     req.response
       ..statusCode = HttpStatus.ok
       ..headers.contentType = ContentType.html
-      ..write(_buildDashboardHtml(pairingPayload, qrSvg));
+      ..write(_buildDashboardHtml(pairingPayload, qrSvg, _resolvedIps));
     await req.response.close();
   }
 
@@ -144,7 +191,7 @@ class EmbeddedDashboardGui {
     final total = n + quiet * 2;
     final sb = StringBuffer()
       ..write(
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 $total $total" width="190" height="190" shape-rendering="crispEdges">',
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 $total $total" width="196" height="196" shape-rendering="crispEdges">',
       )
       ..write('<rect width="$total" height="$total" fill="#FFFFFF" rx="1.5"/>');
 
@@ -162,18 +209,47 @@ class EmbeddedDashboardGui {
   }
 
   static void _launchWindowsDesktopWindow(String url) {
-    // Try opening as a standalone chromeless desktop app window via Edge (built into Windows 10/11),
-    // falling back to `start` if needed.
     Process.run(
       'cmd',
-      ['/c', 'start', '', 'msedge', '--app=$url', '--window-size=980,680'],
+      ['/c', 'start', '', 'msedge', '--app=$url', '--window-size=1020,720'],
     ).catchError((_) {
       return Process.run('cmd', ['/c', 'start', '', url]);
     });
   }
 
-  /// Installs `DartPad.exe` to `%LOCALAPPDATA%\Programs\DartPad\DartPad.exe`,
-  /// creates Desktop & Start Menu shortcuts, and enables Auto-Start on Windows boot.
+  /// Adds Windows Firewall inbound exception for UDP 42100 & TCP 42101 AND
+  /// sets USB RNDIS Tethering interface metric high (500) so LAN Ethernet internet keeps priority!
+  static Future<bool> fixWindowsFirewallAndUsbMetric({bool silent = true}) async {
+    if (!Platform.isWindows) return false;
+    try {
+      final exePath = Platform.resolvedExecutable;
+      final ps = '''
+netsh advfirewall firewall delete rule name="DartPad Receiver UDP" | Out-Null
+netsh advfirewall firewall add rule name="DartPad Receiver UDP" dir=in action=allow protocol=UDP localport=42100 profile=any | Out-Null
+netsh advfirewall firewall delete rule name="DartPad Receiver TCP" | Out-Null
+netsh advfirewall firewall add rule name="DartPad Receiver TCP" dir=in action=allow protocol=TCP localport=42101 profile=any | Out-Null
+netsh advfirewall firewall delete rule name="DartPad Receiver App" | Out-Null
+netsh advfirewall firewall add rule name="DartPad Receiver App" dir=in action=allow program="$exePath" profile=any | Out-Null
+Get-NetAdapter | Where-Object { \$_.InterfaceDescription -match "NDIS|USB|Android" } | ForEach-Object {
+  Set-NetIPInterface -InterfaceIndex \$_.ifIndex -InterfaceMetric 500 -ErrorAction SilentlyContinue
+}
+''';
+      final args = silent
+          ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps]
+          : [
+              '-NoProfile',
+              '-ExecutionPolicy',
+              'Bypass',
+              '-Command',
+              'Start-Process powershell -Verb RunAs -Wait -ArgumentList \'-NoProfile -ExecutionPolicy Bypass -Command "${ps.replaceAll('"', '\\"')}"\''
+            ];
+      final res = await Process.run('powershell', args);
+      return res.exitCode == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<bool> _installWindowsShortcutAndAutoStart() async {
     if (!Platform.isWindows) return false;
     try {
@@ -220,13 +296,22 @@ Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run
     }
   }
 
-  static String _buildDashboardHtml(PairingPayload payload, String qrSvg) {
+  static String _buildDashboardHtml(
+    PairingPayload payload,
+    String qrSvg,
+    List<String> ips,
+  ) {
+    final ipsHtml = ips
+        .map((ip) => '<span class="ip-pill">$ip</span>')
+        .join(' ');
+    final qrUri = payload.toQrUriString();
+
     return '''
 <!DOCTYPE html>
 <html lang="id">
 <head>
 <meta charset="UTF-8">
-<title>DartPad Windows Dashboard</title>
+<title>DartPad v${DartPadAppSettings.appVersion} Windows Dashboard</title>
 <style>
   :root {
     --bg: #0b0e14;
@@ -234,55 +319,63 @@ Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run
     --accent: #00e5ff;
     --pink: #ff4081;
     --green: #00e676;
+    --amber: #ffab00;
     --text: #f0f4f8;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
-  body { background: var(--bg); color: var(--text); padding: 20px; user-select: none; }
-  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px solid #222c3c; }
-  .title { font-size: 20px; font-weight: 800; letter-spacing: 0.5px; color: var(--accent); }
-  .badge { padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 700; background: #232d3f; }
+  body { background: var(--bg); color: var(--text); padding: 18px; user-select: none; }
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #222c3c; }
+  .title { font-size: 19px; font-weight: 800; color: var(--accent); }
+  .badge { padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; background: #232d3f; }
   .badge.online { background: rgba(0, 230, 118, 0.18); color: var(--green); border: 1px solid var(--green); }
-  .grid { display: grid; grid-template-columns: 300px 1fr; gap: 20px; }
-  .card { background: var(--panel); border-radius: 16px; padding: 18px; border: 1px solid #202938; }
-  .card h2 { font-size: 15px; color: #9fb0c7; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.6px; }
-  .qr-box { display: flex; flex-direction: column; align-items: center; background: #0e131b; padding: 16px; border-radius: 12px; margin-bottom: 14px; }
-  .pin-code { font-size: 28px; font-weight: 900; letter-spacing: 5px; color: var(--accent); margin-top: 10px; }
-  .info-row { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; border-bottom: 1px solid #1c2432; }
-  .btn { width: 100%; margin-top: 10px; padding: 11px; border: none; border-radius: 10px; background: var(--pink); color: #fff; font-weight: 700; cursor: pointer; font-size: 13px; transition: 0.15s; }
-  .btn.secondary { background: #1e293b; border: 1px solid var(--accent); color: var(--accent); }
-  .btn:hover { opacity: 0.9; transform: translateY(-1px); }
-  .controller-stage { display: flex; flex-direction: column; gap: 16px; }
+  .grid { display: grid; grid-template-columns: 320px 1fr; gap: 18px; }
+  .card { background: var(--panel); border-radius: 16px; padding: 16px; border: 1px solid #202938; }
+  .card h2 { font-size: 14px; color: #9fb0c7; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.6px; }
+  .qr-box { display: flex; flex-direction: column; align-items: center; background: #0e131b; padding: 14px; border-radius: 12px; margin-bottom: 12px; }
+  .pin-code { font-size: 28px; font-weight: 900; letter-spacing: 5px; color: var(--accent); margin-top: 8px; }
+  .ip-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 8px 0; }
+  .ip-pill { background: #1c2636; border: 1px solid #2d3c54; color: var(--green); padding: 3px 8px; border-radius: 8px; font-size: 12px; font-weight: 700; user-select: text; }
+  .info-row { display: flex; justify-content: space-between; font-size: 12px; padding: 5px 0; border-bottom: 1px solid #1c2432; }
+  .uri-box { margin-top: 8px; background: #0b0e14; padding: 6px 8px; border-radius: 8px; font-size: 10px; color: #8496ae; word-break: break-all; user-select: text; border: 1px solid #202938; }
+  .btn { width: 100%; margin-top: 8px; padding: 10px; border: none; border-radius: 10px; background: var(--pink); color: #fff; font-weight: 700; cursor: pointer; font-size: 12px; transition: 0.15s; }
+  .btn.secondary { background: #1a2434; border: 1px solid var(--accent); color: var(--accent); }
+  .btn.warn { background: #261d12; border: 1px solid var(--amber); color: var(--amber); }
+  .btn:hover { opacity: 0.92; transform: translateY(-1px); }
+  .controller-stage { display: flex; flex-direction: column; gap: 14px; }
   .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-  .metric-box { background: #0e131b; padding: 12px; border-radius: 10px; text-align: center; }
-  .metric-val { font-size: 20px; font-weight: 800; color: var(--accent); }
+  .metric-box { background: #0e131b; padding: 11px; border-radius: 10px; text-align: center; }
+  .metric-val { font-size: 19px; font-weight: 800; color: var(--accent); }
   .metric-lbl { font-size: 11px; color: #8496ae; margin-top: 3px; }
-  .buttons-grid { display: flex; flex-wrap: wrap; gap: 8px; }
-  .gbtn { padding: 8px 13px; border-radius: 8px; background: #1c2433; border: 1px solid #2b374d; font-size: 12px; font-weight: 700; color: #8fa2bd; transition: 0.05s; }
+  .buttons-grid { display: flex; flex-wrap: wrap; gap: 7px; }
+  .gbtn { padding: 7px 12px; border-radius: 8px; background: #1c2433; border: 1px solid #2b374d; font-size: 12px; font-weight: 700; color: #8fa2bd; transition: 0.05s; }
   .gbtn.active { background: var(--accent); color: #000; border-color: #fff; box-shadow: 0 0 12px rgba(0,229,255,0.6); transform: scale(1.06); }
-  .sticks-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .stick-box { background: #0e131b; padding: 14px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; }
-  .stick-circle { width: 110px; height: 110px; border-radius: 50%; border: 2px solid #2b374d; position: relative; margin: 8px 0; background: #121822; }
-  .stick-dot { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 8px var(--accent); }
+  .sticks-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .stick-box { background: #0e131b; padding: 12px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; }
+  .stick-circle { width: 104px; height: 104px; border-radius: 50%; border: 2px solid #2b374d; position: relative; margin: 8px 0; background: #121822; }
+  .stick-dot { width: 20px; height: 20px; border-radius: 50%; background: var(--accent); position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 8px var(--accent); }
   .trigger-bar { width: 100%; height: 10px; background: #1c2433; border-radius: 5px; overflow: hidden; margin-top: 6px; }
   .trigger-fill { height: 100%; width: 0%; background: var(--pink); transition: width 0.04s; }
 </style>
 </head>
 <body>
   <div class="header">
-    <div class="title">DARTPAD RECEIVER DASHBOARD (AUTO-PAIR Wi-Fi & USB)</div>
-    <div id="connBadge" class="badge">WAITING FOR PHONE (AUTO-PAIR READY)...</div>
+    <div class="title">DARTPAD v${DartPadAppSettings.appVersion} RECEIVER (LAN + Wi-Fi + USB)</div>
+    <div id="connBadge" class="badge">MENUNGGU HP (AUTO-PAIR / QR READY)...</div>
   </div>
   <div class="grid">
     <div class="card">
-      <h2>Auto-Pair / QR / PIN</h2>
+      <h2>Scan QR Kamera / PIN Pairing</h2>
       <div class="qr-box">
         $qrSvg
         <div class="pin-code">${payload.pin}</div>
       </div>
-      <div class="info-row"><span>IP Address PC</span><strong>${payload.ip}</strong></div>
-      <div class="info-row"><span>UDP Port</span><strong>${payload.port}</strong></div>
+      <div style="font-size:11px;color:#8496ae;">Semua IP PC Aktif (LAN / Wi-Fi / USB):</div>
+      <div class="ip-list">$ipsHtml</div>
+      <div class="info-row"><span>UDP Port / HTTP Port</span><strong>${payload.port} / ${payload.httpPort}</strong></div>
       <div class="info-row"><span>Nama PC</span><strong>${payload.deviceName}</strong></div>
+      <div class="uri-box" title="QR URI">${qrUri}</div>
       <button class="btn" onclick="testRumble()">Test Getar (Rumble) ke HP</button>
+      <button id="fwBtn" class="btn warn" onclick="fixFirewall()">🛡️ Izinkan Firewall & Fix USB Tether LAN</button>
       <button id="installBtn" class="btn secondary" onclick="installShortcut()">📌 Pasang Shortcut Desktop & Auto-Start</button>
     </div>
 
@@ -341,7 +434,7 @@ ws.onmessage = (ev) => {
     badge.textContent = 'TERHUBUNG: ' + (data.clientDeviceName || 'Android') + ' (' + (data.clientAddress || '') + ')';
   } else {
     badge.className = 'badge';
-    badge.textContent = 'WAITING FOR PHONE (AUTO-PAIR READY)...';
+    badge.textContent = 'MENUNGGU HP (AUTO-PAIR / QR READY)...';
   }
   document.getElementById('ppsVal').textContent = data.packetsPerSecond + ' Hz';
   document.getElementById('lossVal').textContent = data.packetLossPercent.toFixed(1) + '%';
@@ -371,6 +464,16 @@ ws.onmessage = (ev) => {
 
 function testRumble() {
   fetch('/api/rumble', { method: 'POST' });
+}
+
+async function fixFirewall() {
+  const btn = document.getElementById('fwBtn');
+  btn.textContent = 'Mengatur Firewall & Metric USB...';
+  const res = await fetch('/api/fix-network', { method: 'POST' });
+  const json = await res.json();
+  btn.textContent = json.ok
+    ? '✅ Firewall & USB Tether LAN Berhasil Diatur!'
+    : '⚠️ Jalankan sebagai Administrator jika gagal';
 }
 
 async function installShortcut() {
