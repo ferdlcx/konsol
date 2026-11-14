@@ -533,7 +533,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           children: [
                             Text(
                               connected
-                                  ? '${widget.engine.connectedServerName ?? "Windows PC"}'
+                                  ? (widget.engine.connectedServerName ??
+                                      'Windows PC')
                                   : 'Siap Disambungkan',
                               style: const TextStyle(
                                 color: Colors.white,
