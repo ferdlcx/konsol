@@ -67,9 +67,11 @@ enum DartPadThemePreset {
 /// so all customizations and paired PC credentials survive phone/PC reboots.
 class DartPadAppSettings {
   static const String appVersion = '0.2.0';
-  static const String releaseDate = '2026-11-13';
+  static const String releaseDate = '2026-11-14';
   static const String releaseUrl =
-      'https://github.com/ferdlcx/konsol/releases/tag/v0.1.0';
+      'https://github.com/ferdlcx/konsol/releases/tag/v0.2.0';
+  static const String latestReleaseApiUrl =
+      'https://api.github.com/repos/ferdlcx/konsol/releases/latest';
 
   final int updateRateHz;
   final bool autoReconnect;
@@ -96,7 +98,7 @@ class DartPadAppSettings {
     this.themeId = 'xbox_green',
     this.globalScale = 1.0,
     this.activeProfileId = 'xbox_default',
-    this.activeLayoutId = 'xbox_authentic_landscape',
+    this.activeLayoutId = 'xbox_authentic_v2',
     this.lastConnectedIp,
     this.lastConnectedPort = 42100,
     this.lastPairedPin,

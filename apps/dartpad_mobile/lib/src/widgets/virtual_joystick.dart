@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'package:dartpad_protocol/dartpad_protocol.dart';
 import 'package:flutter/material.dart';
 
 /// High-precision 360-degree virtual analog joystick rendered via [CustomPainter].
