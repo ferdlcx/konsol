@@ -297,7 +297,7 @@ Future<int> _runButtonResponseSelfTest(
 }
 
 /// Detects all active LAN/Wi-Fi/USB IPv4 addresses, ranking physical LAN/Wi-Fi
-/// ahead of virtual adapters (WSL, Hyper-V, VirtualBox, Docker).
+/// ahead of virtual/VPN adapters (Radmin, Hamachi, ZeroTier, WireGuard, WSL, Hyper-V, VirtualBox, Docker).
 Future<List<String>> _detectAllPhysicalIpv4s() async {
   final preferred = <String>[];
   final secondary = <String>[];
@@ -315,13 +315,26 @@ Future<List<String>> _detectAllPhysicalIpv4s() async {
           lowerName.contains('vmware') ||
           lowerName.contains('docker') ||
           lowerName.contains('loopback') ||
-          lowerName.contains('tailscale');
+          lowerName.contains('tailscale') ||
+          lowerName.contains('radmin') ||
+          lowerName.contains('hamachi') ||
+          lowerName.contains('zerotier') ||
+          lowerName.contains('wireguard') ||
+          lowerName.contains('openvpn') ||
+          lowerName.contains('nord') ||
+          lowerName.contains('warp') ||
+          lowerName.contains('bluetooth') ||
+          lowerName.contains('npcap') ||
+          lowerName.contains('virtual') ||
+          RegExp(r'\b(tun|tap)\d*\b').hasMatch(lowerName);
 
       for (final addr in iface.addresses) {
         final ip = addr.address;
         if (addr.isLoopback || ip.startsWith('169.254.')) continue;
-        final isVirtualRange =
-            ip.startsWith('192.168.56.') || ip.startsWith('172.');
+        final isVirtualRange = ip.startsWith('192.168.56.') ||
+            ip.startsWith('172.') ||
+            ip.startsWith('26.') ||
+            ip.startsWith('100.');
         if (!isVirtual && !isVirtualRange) {
           if (!preferred.contains(ip)) preferred.add(ip);
         } else {

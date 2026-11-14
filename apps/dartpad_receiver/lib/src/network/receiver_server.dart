@@ -46,6 +46,7 @@ class DartPadReceiverServer {
   final GamepadProvider gamepadProvider;
   final Duration watchdogTimeout;
   final void Function(ReceiverDiagnosticsSnapshot snapshot)? onDiagnosticsUpdate;
+  void Function(RumbleEvent rumble)? onRumbleGenerated;
 
   late final String _pairingPin;
   String? _activeSessionToken;
@@ -71,6 +72,7 @@ class DartPadReceiverServer {
     this.watchdogTimeout = const Duration(milliseconds: 200),
     String? customPin,
     this.onDiagnosticsUpdate,
+    this.onRumbleGenerated,
   }) : _pairingPin = customPin ?? _generatePin() {
     _watchdog = InputWatchdog(
       timeout: watchdogTimeout,
@@ -80,11 +82,108 @@ class DartPadReceiverServer {
 
   String get pairingPin => _pairingPin;
   bool get isClientConnected => _activeSessionFlag != null;
+  String? get activeSessionToken => _activeSessionToken;
+  int? get activeSessionFlag => _activeSessionFlag;
   ControllerState get currentState => _currentState;
   SequenceTracker get sequenceTracker => _sequenceTracker;
   int get boundPort => _socket?.port ?? port;
 
   int advertisedHttpPort = 42101;
+
+  bool isValidSessionToken(String? token) =>
+      token != null &&
+      token.isNotEmpty &&
+      _activeSessionToken != null &&
+      token == _activeSessionToken;
+
+  /// Pairs a remote controller over TCP HTTP (`POST /api/pair`), solving
+  /// one-way / asymmetric UDP issues where PC turns green while phone gets no reply.
+  Map<String, dynamic> handleHttpPair({
+    required String pin,
+    String deviceName = 'Android Controller',
+    String? clientAddress,
+  }) {
+    if (pin.trim() != _pairingPin) {
+      return {
+        'ok': false,
+        'reason': 'Invalid pairing PIN',
+      };
+    }
+
+    _activeSessionToken =
+        'sess_${DateTime.now().microsecondsSinceEpoch}_${Random().nextInt(999999)}';
+    _activeSessionFlag =
+        PairingPayload.computeSessionFlag(_activeSessionToken!);
+    if (clientAddress != null) {
+      final parsed = InternetAddress.tryParse(clientAddress);
+      if (parsed != null) {
+        _connectedClientAddress = parsed;
+        _connectedClientPort ??= 0;
+      }
+    }
+    _connectedClientName =
+        deviceName.trim().isEmpty ? 'Android Controller' : deviceName.trim();
+    _sequenceTracker.reset();
+    _watchdog.feed();
+    _emitSnapshot();
+
+    return {
+      'ok': true,
+      'sessionToken': _activeSessionToken,
+      'sessionFlag': _activeSessionFlag,
+      'serverName': serverName,
+      'udpPort': boundPort,
+      'httpPort': advertisedHttpPort,
+    };
+  }
+
+  /// Unpairs an HTTP/WebSocket session cleanly and resets virtual gamepad to neutral.
+  void handleHttpUnpair() {
+    _resetToNeutralAndDisconnect();
+  }
+
+  /// Accepts controller state from non-UDP transports (such as TCP WebSocket `/ws-control`
+  /// or the zero-install Web Gamepad `/pad`) and forwards it to the virtual gamepad driver.
+  void handleExternalInputState(
+    ControllerState state, {
+    int? sequence,
+    String? clientAddress,
+    String? clientDeviceName,
+  }) {
+    if (_activeSessionFlag == null) {
+      _activeSessionToken ??=
+          'sess_${DateTime.now().microsecondsSinceEpoch}_${Random().nextInt(999999)}';
+      _activeSessionFlag =
+          PairingPayload.computeSessionFlag(_activeSessionToken!);
+    }
+    if (clientAddress != null && _connectedClientAddress == null) {
+      final parsed = InternetAddress.tryParse(clientAddress);
+      if (parsed != null) {
+        _connectedClientAddress = parsed;
+        _connectedClientPort ??= 0;
+      }
+    }
+    if (clientDeviceName != null && clientDeviceName.trim().isNotEmpty) {
+      _connectedClientName = clientDeviceName.trim();
+    }
+
+    _watchdog.feed();
+    _packetsInCurrentWindow++;
+    if (sequence != null) {
+      _lastSequence = sequence;
+    } else {
+      _lastSequence = (_lastSequence + 1) & 0xFFFFFFFF;
+    }
+    _currentState = state;
+    gamepadProvider.update(_currentState);
+
+    final driverRumble = gamepadProvider.pollRumble();
+    if (driverRumble != null) {
+      sendRumbleToClient(driverRumble);
+    }
+
+    _emitSnapshot();
+  }
 
   /// Generates the [PairingPayload] (for QR Code & manual pairing) for local PC IPs.
   PairingPayload buildPairingPayload(
@@ -193,14 +292,19 @@ class DartPadReceiverServer {
     }
   }
 
-  /// Sends a Force Feedback / [RumbleEvent] over UDP to the connected Android phone
+  /// Sends a Force Feedback / [RumbleEvent] over UDP & any connected WebSocket controllers
   /// so the phone vibrates in sync with the PC game (or during a controller vibration test).
   bool sendRumbleToClient(RumbleEvent rumble) {
+    onRumbleGenerated?.call(rumble);
     final socket = _socket;
     final addr = _connectedClientAddress;
     final port = _connectedClientPort;
-    if (socket == null || addr == null || port == null || !isClientConnected) {
-      return false;
+    if (socket == null ||
+        addr == null ||
+        port == null ||
+        port <= 0 ||
+        !isClientConnected) {
+      return isClientConnected;
     }
 
     _lastSequence = (_lastSequence + 1) & 0xFFFFFFFF;

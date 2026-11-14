@@ -544,7 +544,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ),
                             Text(
                               connected
-                                  ? 'Terhubung • ${widget.engine.connectedServerIp} • ${widget.engine.lastRttMs.toStringAsFixed(0)} ms'
+                                  ? 'Terhubung (${widget.engine.transportMode}) • ${widget.engine.connectedServerIp} • ${widget.engine.lastRttMs.toStringAsFixed(0)} ms'
                                   : 'Scan QR di jendela DartPad PC atau sambung otomatis Wi-Fi/USB.',
                               style: const TextStyle(
                                 color: Colors.white60,
@@ -945,7 +945,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Padding(
                       padding: const EdgeInsets.only(top: 6),
                       child: SelectableText(
-                        '$_latestReleaseUrl',
+                        _latestReleaseUrl!,
                         style: const TextStyle(
                             color: Colors.white54, fontSize: 10),
                       ),
@@ -955,7 +955,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 12),
 
-            // 5. Manual Connection Fallback
+            // 5. Manual Connection Fallback & Browser Controller Alternative
             Container(
               decoration: BoxDecoration(
                 color: Color(theme.panelHex),
@@ -1049,12 +1049,55 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ],
                   ),
+                  if (_quickCandidateIps().isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final ip in _quickCandidateIps())
+                          ActionChip(
+                            label: Text(
+                              ip,
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11,
+                              ),
+                            ),
+                            backgroundColor: Color(theme.bgHex),
+                            side: const BorderSide(color: hairline),
+                            onPressed: () {
+                              setState(() {
+                                _ipController.text = ip;
+                              });
+                            },
+                          ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton(
                       onPressed: _isConnecting ? null : _connectManual,
                       child: const Text('Hubungkan Manual (IP + PIN)'),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Color(theme.bgHex),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: hairline),
+                    ),
+                    child: SelectableText(
+                      'Alternatif Tanpa Kamera / Tanpa APK:\nBuka http://${_ipController.text.trim().isNotEmpty ? _ipController.text.trim() : "<IP_PC>"}:42101/pad di Google Chrome HP atau scan tab "QR Browser (/pad)" di PC.',
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 11,
+                      ),
                     ),
                   ),
                 ],
@@ -1064,5 +1107,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
     );
+  }
+
+  List<String> _quickCandidateIps() {
+    final ips = <String>{};
+    final saved = widget.engine.settings.lastConnectedIp;
+    if (saved != null && saved.isNotEmpty) ips.add(saved);
+    for (final iface in _localIfaces) {
+      final p = iface.ip.split('.');
+      if (p.length == 4) {
+        ips.add('${p[0]}.${p[1]}.${p[2]}.1');
+      }
+    }
+    ips.addAll(const ['192.168.42.129', '192.168.137.1', '127.0.0.1']);
+    return ips.toList();
   }
 }

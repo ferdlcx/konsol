@@ -5,9 +5,9 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 /// Full-screen Live Camera QR Code Scanner powered by `mobile_scanner`.
 ///
-/// Uses lifecycle-safe initialization (`autoStart: false` + post-frame `start()`,
-/// `WidgetsBindingObserver`, and clean controller rebuild on retry) to prevent
-/// Android CameraX `genericError` race conditions during route transitions.
+/// Uses `autoStart: true` (`DetectionSpeed.noDuplicates`) and avoids stopping the
+/// camera during `AppLifecycleState.inactive` (such as OS permission dialogs)
+/// to eliminate CameraX `genericError` startup races on Android.
 class QrScannerScreen extends StatefulWidget {
   final MobileControllerEngine engine;
 
@@ -24,9 +24,11 @@ class _QrScannerScreenState extends State<QrScannerScreen>
     with WidgetsBindingObserver {
   MobileScannerController? _scannerController;
   int _cameraEpoch = 0;
+  bool _pausedByLifecycle = false;
 
   bool _isConnecting = false;
   bool _torchOn = false;
+  String? _statusHint;
   String? _errorText;
   String? _lastScannedRaw;
 
@@ -34,43 +36,31 @@ class _QrScannerScreenState extends State<QrScannerScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _createAndStartController();
+    _createController();
   }
 
-  void _createAndStartController() {
+  void _createController() {
     _scannerController?.dispose();
     final ctrl = MobileScannerController(
-      autoStart: false,
-      detectionSpeed: DetectionSpeed.normal,
+      autoStart: true,
+      detectionSpeed: DetectionSpeed.noDuplicates,
       facing: CameraFacing.back,
       formats: const [BarcodeFormat.qrCode],
     );
     _scannerController = ctrl;
+    _pausedByLifecycle = false;
     _cameraEpoch++;
-
-    // Delay start until route transition & SurfaceView layout settle on Android
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await Future<void>.delayed(const Duration(milliseconds: 220));
-      if (!mounted || _scannerController != ctrl) return;
-      try {
-        await ctrl.start();
-      } catch (e) {
-        if (!mounted) return;
-        setState(() {
-          _errorText = 'Kamera gagal memulai ($e). Tap "Muat Ulang Kamera".';
-        });
-      }
-    });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final ctrl = _scannerController;
     if (ctrl == null) return;
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused) {
+    if (state == AppLifecycleState.paused) {
+      _pausedByLifecycle = true;
       unawaited(ctrl.stop().catchError((_) {}));
-    } else if (state == AppLifecycleState.resumed) {
+    } else if (state == AppLifecycleState.resumed && _pausedByLifecycle) {
+      _pausedByLifecycle = false;
       unawaited(ctrl.start().catchError((_) {}));
     }
   }
@@ -89,9 +79,10 @@ class _QrScannerScreenState extends State<QrScannerScreen>
   Future<void> _restartCamera() async {
     setState(() {
       _errorText = null;
+      _statusHint = null;
       _lastScannedRaw = null;
       _torchOn = false;
-      _createAndStartController();
+      _createController();
     });
   }
 
@@ -105,13 +96,34 @@ class _QrScannerScreenState extends State<QrScannerScreen>
     setState(() {
       _isConnecting = true;
       _errorText = null;
+      _statusHint = 'QR terbaca! Menyambungkan ke PC...';
     });
 
     try {
-      final ok = await widget.engine.connectFromQrUri(
-        trimmed,
-        timeout: const Duration(seconds: 4),
-      );
+      bool ok = false;
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        final uri = Uri.tryParse(trimmed);
+        final pin = uri?.queryParameters['pin']?.trim() ?? '';
+        if (uri != null && uri.host.isNotEmpty && pin.isNotEmpty) {
+          ok = await widget.engine.connectWithPayload(
+            PairingPayload(
+              ip: uri.host,
+              port: DartPadProtocolConstants.defaultPort,
+              httpPort: uri.port > 0 ? uri.port : 42101,
+              pin: pin,
+              deviceName: 'Windows PC',
+            ),
+            timeout: const Duration(seconds: 4),
+          );
+        } else {
+          throw const FormatException('QR URL tidak berisi IP PC dan PIN.');
+        }
+      } else {
+        ok = await widget.engine.connectFromQrUri(
+          trimmed,
+          timeout: const Duration(seconds: 4),
+        );
+      }
       if (!mounted) return;
       if (ok) {
         Navigator.of(context).pop(true);
@@ -119,6 +131,7 @@ class _QrScannerScreenState extends State<QrScannerScreen>
       }
       setState(() {
         _isConnecting = false;
+        _statusHint = null;
         _errorText = widget.engine.lastConnectionError ??
             'Gagal terhubung ke PC dari QR Code ini.';
       });
@@ -126,12 +139,14 @@ class _QrScannerScreenState extends State<QrScannerScreen>
       if (!mounted) return;
       setState(() {
         _isConnecting = false;
+        _statusHint = null;
         _errorText = e.message;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _isConnecting = false;
+        _statusHint = null;
         _errorText = 'Kesalahan koneksi: $e';
       });
     }
@@ -196,7 +211,9 @@ class _QrScannerScreenState extends State<QrScannerScreen>
               onDetect: (capture) {
                 for (final barcode in capture.barcodes) {
                   final val = barcode.rawValue;
-                  if (val != null && val.trim().startsWith('dartpad://')) {
+                  if (val != null &&
+                      (val.trim().startsWith('dartpad://') ||
+                          val.trim().contains('/pad?'))) {
                     _handleRawQr(val);
                     break;
                   }
@@ -216,7 +233,7 @@ class _QrScannerScreenState extends State<QrScannerScreen>
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'Kamera belum siap (${error.errorCode.name}).\nPastikan izin Kamera aktif, lalu tekan tombol di bawah.',
+                          'Kamera belum siap (${error.errorCode.name}).\nPastikan izin Kamera aktif, lalu tap Muat Ulang.\n\nAlternatif cepat: buka http://<IP_PC>:42101/pad di Google Chrome HP.',
                           textAlign: TextAlign.center,
                           style: const TextStyle(
                             color: Colors.white70,
@@ -276,9 +293,9 @@ class _QrScannerScreenState extends State<QrScannerScreen>
                       ),
                     ),
                     const SizedBox(height: 10),
-                    const Text(
-                      'Menghubungkan ke PC...',
-                      style: TextStyle(
+                    Text(
+                      _statusHint ?? 'Menghubungkan ke PC...',
+                      style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
                         fontSize: 13,

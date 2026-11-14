@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dartpad_protocol/dartpad_protocol.dart';
 
@@ -26,6 +27,7 @@ class EmbeddedDashboardGui {
 
   HttpServer? _httpServer;
   final Set<WebSocket> _clients = {};
+  final Set<WebSocket> _controlClients = {};
 
   EmbeddedDashboardGui({
     required this.receiverServer,
@@ -71,6 +73,7 @@ class EmbeddedDashboardGui {
     bool openDesktopWindow = true,
     bool bindLoopbackOnly = false,
   }) async {
+    receiverServer.onRumbleGenerated = broadcastRumbleToControlClients;
     final bindAddr =
         bindLoopbackOnly ? InternetAddress.loopbackIPv4 : InternetAddress.anyIPv4;
     try {
@@ -84,6 +87,27 @@ class EmbeddedDashboardGui {
       unawaited(fixWindowsFirewallAndUsbMetric(silent: true));
       _launchWindowsDesktopWindow(dashboardUrl);
     }
+  }
+
+  /// Broadcasts Force Feedback / Rumble events to any connected TCP WebSocket
+  /// or Browser `/pad` controllers.
+  void broadcastRumbleToControlClients(RumbleEvent rumble) {
+    if (_controlClients.isEmpty) return;
+    final payload = jsonEncode({
+      'type': 'rumble',
+      'large': rumble.largeMotor,
+      'small': rumble.smallMotor,
+      'durationMs': rumble.durationMs,
+    });
+    final stale = <WebSocket>[];
+    for (final ws in _controlClients) {
+      try {
+        ws.add(payload);
+      } catch (_) {
+        stale.add(ws);
+      }
+    }
+    _controlClients.removeAll(stale);
   }
 
   /// Broadcasts the latest [ReceiverDiagnosticsSnapshot] to all open GUI windows
@@ -103,6 +127,11 @@ class EmbeddedDashboardGui {
   }
 
   Future<void> stop() async {
+    receiverServer.onRumbleGenerated = null;
+    for (final ws in _controlClients) {
+      await ws.close();
+    }
+    _controlClients.clear();
     for (final ws in _clients) {
       await ws.close();
     }
@@ -113,6 +142,16 @@ class EmbeddedDashboardGui {
 
   Future<void> _handleRequest(HttpRequest req) async {
     final path = req.uri.path;
+
+    if (req.method == 'OPTIONS') {
+      req.response
+        ..statusCode = HttpStatus.noContent
+        ..headers.add('Access-Control-Allow-Origin', '*')
+        ..headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        ..headers.add('Access-Control-Allow-Headers', 'Content-Type');
+      await req.response.close();
+      return;
+    }
 
     if (path == '/ws' && WebSocketTransformer.isUpgradeRequest(req)) {
       final ws = await WebSocketTransformer.upgrade(req);
@@ -131,6 +170,126 @@ class EmbeddedDashboardGui {
             ),
           ),
         ),
+      );
+      return;
+    }
+
+    // Bidirectional TCP WebSocket controller transport (reliable fallback when UDP replies are blocked
+    // AND primary transport for the zero-install Mobile Browser Gamepad at /pad).
+    if (path == '/ws-control' && WebSocketTransformer.isUpgradeRequest(req)) {
+      final token = req.uri.queryParameters['token']?.trim();
+      final pin = req.uri.queryParameters['pin']?.trim();
+      final devName =
+          req.uri.queryParameters['name']?.trim() ?? 'WebSocket Controller';
+      final remoteIp = req.connectionInfo?.remoteAddress.address;
+
+      var authorized = receiverServer.isValidSessionToken(token);
+      if (!authorized && pin != null && pin == receiverServer.pairingPin) {
+        final pairRes = receiverServer.handleHttpPair(
+          pin: pin,
+          deviceName: devName,
+          clientAddress: remoteIp,
+        );
+        authorized = pairRes['ok'] == true;
+      }
+
+      if (!authorized) {
+        req.response.statusCode = HttpStatus.unauthorized;
+        await req.response.close();
+        return;
+      }
+
+      final ws = await WebSocketTransformer.upgrade(req);
+      _controlClients.add(ws);
+      ws.add(
+        jsonEncode({
+          'type': 'ready',
+          'serverName': receiverServer.serverName,
+          'sessionToken': receiverServer.activeSessionToken,
+          'deviceType': receiverServer.gamepadProvider.deviceType.name,
+        }),
+      );
+
+      ws.listen(
+        (dynamic message) {
+          if (message is List<int>) {
+            try {
+              final bytes =
+                  message is Uint8List ? message : Uint8List.fromList(message);
+              final pkt = PacketCodec.decodeInput(bytes);
+              receiverServer.handleExternalInputState(
+                pkt.state,
+                sequence: pkt.sequence,
+                clientAddress: remoteIp,
+                clientDeviceName: devName,
+              );
+            } on FormatException {
+              // Ignore malformed binary frame
+            }
+            return;
+          }
+          if (message is String) {
+            try {
+              final data = jsonDecode(message) as Map<String, dynamic>;
+              final msgType = data['type']?.toString();
+              if (msgType == 'ping') {
+                ws.add(jsonEncode({'type': 'pong', 'ts': data['ts']}));
+                return;
+              }
+              if (msgType == 'disconnect') {
+                receiverServer.handleHttpUnpair();
+                return;
+              }
+              if (msgType == 'input') {
+                final stateMap = data['state'];
+                if (stateMap is Map<String, dynamic>) {
+                  final st = ControllerState.fromJson(stateMap);
+                  receiverServer.handleExternalInputState(
+                    st,
+                    clientAddress: remoteIp,
+                    clientDeviceName: devName,
+                  );
+                } else {
+                  final btnNames = (data['buttons'] as List<dynamic>?) ?? const [];
+                  final btnSet = <GamepadButton>{};
+                  for (final name in btnNames) {
+                    for (final b in GamepadButton.values) {
+                      if (b.name == name.toString()) {
+                        btnSet.add(b);
+                        break;
+                      }
+                    }
+                  }
+                  final st = ControllerState(
+                    buttons: btnSet,
+                    leftStick: StickState(
+                      x: (data['lx'] as num?)?.toDouble() ?? 0.0,
+                      y: (data['ly'] as num?)?.toDouble() ?? 0.0,
+                    ),
+                    rightStick: StickState(
+                      x: (data['rx'] as num?)?.toDouble() ?? 0.0,
+                      y: (data['ry'] as num?)?.toDouble() ?? 0.0,
+                    ),
+                    leftTrigger: (data['lt'] as num?)?.toDouble() ?? 0.0,
+                    rightTrigger: (data['rt'] as num?)?.toDouble() ?? 0.0,
+                  );
+                  receiverServer.handleExternalInputState(
+                    st,
+                    clientAddress: remoteIp,
+                    clientDeviceName: devName,
+                  );
+                }
+              }
+            } catch (_) {}
+          }
+        },
+        onDone: () {
+          _controlClients.remove(ws);
+          receiverServer.handleExternalInputState(ControllerState.neutral);
+        },
+        onError: (_) {
+          _controlClients.remove(ws);
+        },
       );
       return;
     }
@@ -159,6 +318,32 @@ class EmbeddedDashboardGui {
         'driverActive': provider.isHardwareDriverActive,
         'driverStatus': provider.driverStatusSummary,
       });
+      return;
+    }
+
+    // TCP HTTP Pairing endpoint: fixes one-way UDP where PC sees phone connect
+    // but router/firewall drops UDP accept reply back to phone!
+    if (path == '/api/pair' && req.method == 'POST') {
+      final body = await utf8.decoder.bind(req).join();
+      var pin = '';
+      var deviceName = 'Android Controller';
+      try {
+        final data = jsonDecode(body) as Map<String, dynamic>;
+        pin = data['pin']?.toString() ?? '';
+        deviceName = data['deviceName']?.toString() ?? 'Android Controller';
+      } catch (_) {}
+      final res = receiverServer.handleHttpPair(
+        pin: pin,
+        deviceName: deviceName,
+        clientAddress: req.connectionInfo?.remoteAddress.address,
+      );
+      await _writeJson(req, res);
+      return;
+    }
+
+    if (path == '/api/unpair' && req.method == 'POST') {
+      receiverServer.handleHttpUnpair();
+      await _writeJson(req, {'ok': true});
       return;
     }
 
@@ -245,17 +430,38 @@ class EmbeddedDashboardGui {
       return;
     }
 
+    // Zero-Install Browser Touch Gamepad (/pad): works from ANY phone browser (Chrome / Google Lens QR)
+    if (path == '/pad') {
+      final pinFromUrl = req.uri.queryParameters['pin']?.trim() ?? '';
+      req.response
+        ..statusCode = HttpStatus.ok
+        ..headers.contentType = ContentType.html
+        ..write(_buildWebControllerHtml(initialPin: pinFromUrl));
+      await req.response.close();
+      return;
+    }
+
     final pairingPayload = receiverServer.buildPairingPayload(
       localIp,
       allIps: _resolvedIps,
       httpPort: guiPort,
     );
-    final qrSvg = _renderQrSvg(pairingPayload);
+    final qrSvg = _renderQrSvg(pairingPayload.toQrUriString());
+    final webPadUrl = 'http://$localIp:$guiPort/pad?pin=${receiverServer.pairingPin}';
+    final webQrSvg = _renderQrSvg(webPadUrl);
 
     req.response
       ..statusCode = HttpStatus.ok
       ..headers.contentType = ContentType.html
-      ..write(_buildDashboardHtml(pairingPayload, qrSvg, _resolvedIps));
+      ..write(
+        _buildDashboardHtml(
+          pairingPayload,
+          qrSvg,
+          webQrSvg,
+          webPadUrl,
+          _resolvedIps,
+        ),
+      );
     await req.response.close();
   }
 
@@ -458,8 +664,8 @@ class EmbeddedDashboardGui {
     }
   }
 
-  static String _renderQrSvg(PairingPayload payload) {
-    final matrix = QrPairingRenderer.generateMatrix(payload);
+  static String _renderQrSvg(String qrContent) {
+    final matrix = QrPairingRenderer.generateMatrixFromText(qrContent);
     final n = matrix.length;
     const quiet = 2;
     final total = n + quiet * 2;
@@ -573,6 +779,8 @@ Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run
   String _buildDashboardHtml(
     PairingPayload payload,
     String qrSvg,
+    String webQrSvg,
+    String webPadUrl,
     List<String> ips,
   ) {
     final provider = receiverServer.gamepadProvider;
@@ -617,10 +825,14 @@ Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run
   .hbtn { padding: 6px 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; }
   .hbtn:hover { background: #1e2128; }
   .hbtn.danger { color: #fca5a5; border-color: rgba(239, 68, 68, 0.35); }
-  .grid { display: grid; grid-template-columns: 310px 1fr; gap: 16px; }
+  .grid { display: grid; grid-template-columns: 320px 1fr; gap: 16px; }
   .card { background: var(--panel); border-radius: 12px; padding: 16px; border: 1px solid var(--line); }
-  .card h2 { font-size: 11px; color: var(--muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.9px; font-weight: 700; }
+  .card h2 { font-size: 11px; color: var(--muted); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.9px; font-weight: 700; }
+  .qr-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: var(--bg); padding: 3px; border-radius: 8px; border: 1px solid var(--line); margin-bottom: 10px; }
+  .qr-tabs button { border: none; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+  .qr-tabs button.active { background: var(--text); color: var(--bg); }
   .qr-box { display: flex; flex-direction: column; align-items: center; background: var(--panel2); padding: 14px; border-radius: 10px; border: 1px solid var(--line); margin-bottom: 12px; }
+  .qr-hint { font-size: 10px; color: var(--muted); margin-top: 8px; text-align: center; line-height: 1.35; }
   .pin-code { font-size: 26px; font-weight: 800; letter-spacing: 5px; color: var(--text); margin-top: 10px; font-variant-numeric: tabular-nums; }
   .ip-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px 0; }
   .ip-pill { background: var(--panel2); border: 1px solid var(--line); color: var(--text); padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; user-select: text; font-family: monospace; }
@@ -672,16 +884,22 @@ Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run
 
   <div class="grid">
     <div class="card">
-      <h2>Pairing QR &amp; PIN</h2>
+      <h2>Pairing QR, PIN &amp; Web Controller</h2>
+      <div class="qr-tabs">
+        <button id="tabApk" class="active" onclick="setQrTab('apk')">QR APK DartPad</button>
+        <button id="tabWeb" onclick="setQrTab('web')">QR Browser (/pad)</button>
+      </div>
       <div class="qr-box">
-        $qrSvg
+        <div id="qrApkWrap">$qrSvg</div>
+        <div id="qrWebWrap" style="display:none;">$webQrSvg</div>
         <div class="pin-code">${payload.pin}</div>
+        <div id="qrHint" class="qr-hint">Scan pakai APK DartPad (Hybrid UDP + TCP WebSocket).</div>
       </div>
       <div style="font-size:11px;color:var(--muted);">IP PC (LAN / Wi-Fi / USB Tether):</div>
       <div class="ip-list">$ipsHtml</div>
       <div class="info-row"><span>UDP / HTTP Port</span><strong>${payload.port} / ${payload.httpPort}</strong></div>
       <div class="info-row"><span>Nama PC</span><strong>${payload.deviceName}</strong></div>
-      <div class="uri-box" title="QR URI">${qrUri}</div>
+      <div id="uriBox" class="uri-box" title="Pairing URI">$qrUri</div>
       <button class="btn primary" onclick="testRumble()">Test Getar (Rumble) ke HP</button>
       <button id="fwBtn" class="btn" onclick="fixFirewall()">Izinkan Firewall &amp; USB Tether LAN</button>
       <button id="installBtn" class="btn" onclick="installShortcut()">Pasang Shortcut &amp; Auto-Start</button>
@@ -733,13 +951,28 @@ Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run
       </div>
 
       <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;">
-        <span style="font-size:11px;color:var(--muted);">Cmd window otomatis disembunyikan agar tidak berkedip.</span>
+        <span style="font-size:11px;color:var(--muted);">Alternatif tanpa APK: buka <strong>$webPadUrl</strong> di browser HP.</span>
         <button id="kbBtn" class="hbtn" onclick="toggleKb()">Keyboard Fallback: ${kbOn ? 'ON' : 'OFF'}</button>
       </div>
     </div>
   </div>
 
 <script>
+const APK_URI = ${jsonEncode(qrUri)};
+const WEB_PAD_URL = ${jsonEncode(webPadUrl)};
+
+function setQrTab(tab) {
+  const isWeb = tab === 'web';
+  document.getElementById('tabApk').className = isWeb ? '' : 'active';
+  document.getElementById('tabWeb').className = isWeb ? 'active' : '';
+  document.getElementById('qrApkWrap').style.display = isWeb ? 'none' : 'block';
+  document.getElementById('qrWebWrap').style.display = isWeb ? 'block' : 'none';
+  document.getElementById('uriBox').textContent = isWeb ? WEB_PAD_URL : APK_URI;
+  document.getElementById('qrHint').textContent = isWeb
+      ? 'Scan pakai Google Lens / Kamera HP, atau buka URL di Chrome untuk main langsung!'
+      : 'Scan pakai APK DartPad (Hybrid UDP + TCP WebSocket).';
+}
+
 const ALL_BUTTONS = [
   ['south','A / ✕'], ['east','B / ○'], ['west','X / □'], ['north','Y / △'],
   ['leftShoulder','LB / L1'], ['rightShoulder','RB / R1'], ['leftTrigger','LT / L2'], ['rightTrigger','RT / R2'],
@@ -891,6 +1124,282 @@ async function checkUpdate() {
 async function shutdownApp() {
   await fetch('/api/shutdown', { method: 'POST' });
   window.close();
+}
+</script>
+</body>
+</html>
+''';
+  }
+
+  /// Zero-Install Landscape Mobile Touch Gamepad served directly at `http://<PC_IP>:42101/pad`.
+  /// Connects over TCP WebSocket `/ws-control` so it works cleanly even if camera permissions
+  /// or UDP broadcasts fail!
+  String _buildWebControllerHtml({String initialPin = ''}) {
+    return '''
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>DartPad Web Controller</title>
+<style>
+  :root {
+    --bg: #0e0f12;
+    --panel: #16181d;
+    --line: #282c36;
+    --text: #f3f4f6;
+    --muted: #8e95a5;
+    --accent: #e5e7eb;
+    --green: #22c55e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
+  .pad-root { position: relative; width: 100%; height: 100%; }
+  .topbar {
+    position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 8px; z-index: 20;
+    background: rgba(22, 24, 29, 0.92); border: 1px solid var(--line);
+    padding: 5px 10px; border-radius: 999px; font-size: 11px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; }
+  .dot.ok { background: var(--green); }
+  .tbtn { border: 1px solid var(--line); background: #1e2128; color: var(--text); border-radius: 999px; padding: 3px 9px; font-size: 10px; font-weight: 700; cursor: pointer; }
+  .btn {
+    position: absolute; display: flex; align-items: center; justify-content: center;
+    background: var(--panel); border: 1.5px solid #323746; color: var(--text);
+    font-weight: 700; border-radius: 50%; transition: transform 0.04s, background 0.04s;
+  }
+  .btn.pill { border-radius: 10px; font-size: 12px; }
+  .btn.active { background: var(--accent); color: var(--bg); border-color: var(--accent); transform: scale(0.93); }
+  .stick-base {
+    position: absolute; border-radius: 50%; background: rgba(22,24,29,0.72);
+    border: 1.5px solid #303544; display: flex; align-items: center; justify-content: center;
+  }
+  .stick-knob {
+    width: 44%; height: 44%; border-radius: 50%; background: #d4d7dd;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.6); pointer-events: none;
+  }
+  .pin-modal {
+    position: fixed; inset: 0; background: rgba(10,11,14,0.92); z-index: 40;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .pin-card {
+    width: 100%; max-width: 320px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 18px; text-align: center;
+  }
+  .pin-card input {
+    width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font-size: 20px; text-align: center;
+    letter-spacing: 6px; margin: 12px 0; touch-action: auto; user-select: text;
+  }
+  .pin-card button {
+    width: 100%; padding: 10px; border-radius: 8px; border: none;
+    background: var(--text); color: var(--bg); font-weight: 700; font-size: 13px; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <span id="wsDot" class="dot"></span>
+    <span id="wsLabel">WebPad</span>
+    <button class="tbtn" onclick="toggleMode()">Xbox/PS</button>
+    <button class="tbtn" onclick="goFullscreen()">Fullscreen</button>
+  </div>
+
+  <div id="padRoot" class="pad-root">
+    <!-- Left & Right Shoulders / Triggers -->
+    <div class="btn pill" data-btn="leftTrigger" style="left:3%;top:6%;width:13%;height:11%;">LT</div>
+    <div class="btn pill" data-btn="leftShoulder" style="left:3%;top:19%;width:13%;height:10%;">LB</div>
+    <div class="btn pill" data-btn="rightTrigger" style="right:3%;top:6%;width:13%;height:11%;">RT</div>
+    <div class="btn pill" data-btn="rightShoulder" style="right:3%;top:19%;width:13%;height:10%;">RB</div>
+
+    <!-- Center Menu Buttons -->
+    <div class="btn pill" data-btn="select" style="left:36%;top:16%;width:8%;height:9%;">VIEW</div>
+    <div class="btn pill" data-btn="guide" style="left:46%;top:16%;width:8%;height:9%;">HOME</div>
+    <div class="btn pill" data-btn="start" style="left:56%;top:16%;width:8%;height:9%;">MENU</div>
+
+    <!-- Left Stick & L3 -->
+    <div id="lsBase" class="stick-base" style="left:5%;top:36%;width:21vw;height:21vw;max-width:155px;max-height:155px;">
+      <div id="lsKnob" class="stick-knob"></div>
+    </div>
+    <div class="btn pill" data-btn="leftStick" style="left:6%;bottom:6%;width:9%;height:10%;">L3</div>
+
+    <!-- D-Pad -->
+    <div class="btn pill" data-btn="dpadUp" style="left:28%;top:50%;width:7.5%;height:11%;">▲</div>
+    <div class="btn pill" data-btn="dpadDown" style="left:28%;top:74%;width:7.5%;height:11%;">▼</div>
+    <div class="btn pill" data-btn="dpadLeft" style="left:20%;top:62%;width:7.5%;height:11%;">◀</div>
+    <div class="btn pill" data-btn="dpadRight" style="left:36%;top:62%;width:7.5%;height:11%;">▶</div>
+
+    <!-- Right Face Buttons (Xbox/PS) -->
+    <div class="btn" id="bNorth" data-btn="north" style="right:11%;top:35%;width:58px;height:58px;">Y</div>
+    <div class="btn" id="bWest" data-btn="west" style="right:18%;top:49%;width:58px;height:58px;">X</div>
+    <div class="btn" id="bEast" data-btn="east" style="right:4%;top:49%;width:58px;height:58px;">B</div>
+    <div class="btn" id="bSouth" data-btn="south" style="right:11%;top:63%;width:58px;height:58px;">A</div>
+
+    <!-- Right Stick & R3 -->
+    <div id="rsBase" class="stick-base" style="right:25%;bottom:8%;width:18vw;height:18vw;max-width:132px;max-height:132px;">
+      <div id="rsKnob" class="stick-knob"></div>
+    </div>
+    <div class="btn pill" data-btn="rightStick" style="right:6%;bottom:6%;width:9%;height:10%;">R3</div>
+  </div>
+
+  <div id="pinModal" class="pin-modal" style="display:none;">
+    <div class="pin-card">
+      <div style="font-weight:700;font-size:15px;">Sambung Web Controller</div>
+      <div style="font-size:12px;color:#8e95a5;margin-top:4px;">Masukkan PIN 6-Digit dari jendela DartPad PC</div>
+      <input id="pinInput" type="tel" maxlength="6" placeholder="123456">
+      <button onclick="connectFromInput()">Hubungkan Sekarang</button>
+    </div>
+  </div>
+
+<script>
+let currentPin = ${jsonEncode(initialPin)};
+let ws = null;
+let psMode = false;
+const pressedMap = new Map();
+const activeButtons = new Set();
+let lx = 0, ly = 0, rx = 0, ry = 0;
+
+function toggleMode() {
+  psMode = !psMode;
+  document.getElementById('bNorth').textContent = psMode ? '△' : 'Y';
+  document.getElementById('bWest').textContent = psMode ? '□' : 'X';
+  document.getElementById('bEast').textContent = psMode ? '○' : 'B';
+  document.getElementById('bSouth').textContent = psMode ? '✕' : 'A';
+}
+
+function goFullscreen() {
+  const docEl = document.documentElement;
+  if (!document.fullscreenElement && docEl.requestFullscreen) {
+    docEl.requestFullscreen().catch(() => {});
+  } else if (document.exitFullscreen) {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+
+function syncButtons() {
+  activeButtons.clear();
+  pressedMap.forEach((btn) => activeButtons.add(btn));
+  document.querySelectorAll('[data-btn]').forEach((el) => {
+    const b = el.getAttribute('data-btn');
+    if (activeButtons.has(b)) el.classList.add('active');
+    else el.classList.remove('active');
+  });
+  sendState();
+}
+
+function sendState() {
+  if (!ws || ws.readyState !== 1) return;
+  const lt = activeButtons.has('leftTrigger') ? 1.0 : 0.0;
+  const rt = activeButtons.has('rightTrigger') ? 1.0 : 0.0;
+  ws.send(JSON.stringify({
+    type: 'input',
+    buttons: Array.from(activeButtons),
+    lx: lx, ly: ly, rx: rx, ry: ry, lt: lt, rt: rt
+  }));
+}
+
+document.querySelectorAll('[data-btn]').forEach((el) => {
+  const btn = el.getAttribute('data-btn');
+  el.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    pressedMap.set(e.pointerId, btn);
+    if (navigator.vibrate) navigator.vibrate(14);
+    syncButtons();
+  });
+  const release = (e) => {
+    if (pressedMap.has(e.pointerId)) {
+      pressedMap.delete(e.pointerId);
+      syncButtons();
+    }
+  };
+  el.addEventListener('pointerup', release);
+  el.addEventListener('pointercancel', release);
+});
+
+function bindStick(baseId, knobId, onMove) {
+  const base = document.getElementById(baseId);
+  const knob = document.getElementById(knobId);
+  let activePid = null;
+
+  function updateFromEvent(e) {
+    const rect = base.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const radius = rect.width * 0.42;
+    let dx = (e.clientX - cx) / radius;
+    let dy = (e.clientY - cy) / radius;
+    const mag = Math.hypot(dx, dy);
+    if (mag > 1) { dx /= mag; dy /= mag; }
+    knob.style.transform = 'translate(' + (dx * radius * 0.65) + 'px, ' + (dy * radius * 0.65) + 'px)';
+    onMove(dx, -dy);
+    sendState();
+  }
+
+  base.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    activePid = e.pointerId;
+    base.setPointerCapture(e.pointerId);
+    updateFromEvent(e);
+  });
+  base.addEventListener('pointermove', (e) => {
+    if (e.pointerId === activePid) updateFromEvent(e);
+  });
+  const endStick = (e) => {
+    if (e.pointerId === activePid) {
+      activePid = null;
+      knob.style.transform = 'translate(0px, 0px)';
+      onMove(0, 0);
+      sendState();
+    }
+  };
+  base.addEventListener('pointerup', endStick);
+  base.addEventListener('pointercancel', endStick);
+}
+
+bindStick('lsBase', 'lsKnob', (x, y) => { lx = x; ly = y; });
+bindStick('rsBase', 'rsKnob', (x, y) => { rx = x; ry = y; });
+
+function connectWs(pin) {
+  const wsUrl = 'ws://' + location.host + '/ws-control?pin=' + encodeURIComponent(pin) + '&name=Browser-WebPad';
+  ws = new WebSocket(wsUrl);
+  ws.onopen = () => {
+    document.getElementById('pinModal').style.display = 'none';
+    document.getElementById('wsDot').className = 'dot ok';
+    document.getElementById('wsLabel').textContent = 'Terhubung (WebPad)';
+  };
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'rumble' && navigator.vibrate) {
+        navigator.vibrate(msg.durationMs || 80);
+      }
+    } catch (_) {}
+  };
+  ws.onclose = () => {
+    document.getElementById('wsDot').className = 'dot';
+    document.getElementById('wsLabel').textContent = 'Terputus - Reconnecting...';
+    setTimeout(() => connectWs(pin), 1500);
+  };
+}
+
+function connectFromInput() {
+  const val = document.getElementById('pinInput').value.trim();
+  if (val) {
+    currentPin = val;
+    connectWs(currentPin);
+  }
+}
+
+setInterval(() => {
+  if (ws && ws.readyState === 1) sendState();
+}, 35);
+
+if (currentPin) {
+  connectWs(currentPin);
+} else {
+  document.getElementById('pinModal').style.display = 'flex';
 }
 </script>
 </body>

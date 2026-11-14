@@ -2,7 +2,7 @@
 ; Produces a single, one-click Windows Setup Wizard: DartPad-Setup.exe
 
 #define MyAppName "DartPad Receiver"
-#define MyAppVersion "0.3.1"
+#define MyAppVersion "0.3.2"
 #define MyAppPublisher "ferdlcx"
 #define MyAppURL "https://github.com/ferdlcx/konsol"
 #define MyAppExeName "DartPad.exe"

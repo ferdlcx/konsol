@@ -68,9 +68,15 @@ class MobileControllerEngine {
   RawDatagramSocket? _socket;
   StreamSubscription<RawSocketEvent>? _socketSub;
   LowLatencyInputSender? _sender;
+  WebSocket? _wsControl;
+  StreamSubscription<dynamic>? _wsSub;
+  Timer? _wsSyncTimer;
   Timer? _heartbeatTimer;
   Timer? _autoConnectTimer;
   bool _isAttemptingAutoConnect = false;
+  bool _isManualConnectInFlight = false;
+  int _wsSequence = 0;
+  int _wsPacketsSent = 0;
 
   ControllerState _currentState = ControllerState.neutral;
   final Map<String, Set<GamepadButton>> _activeTouchSources = {};
@@ -78,6 +84,7 @@ class MobileControllerEngine {
   int _macroRunId = 0;
 
   bool _isConnected = false;
+  String _transportMode = 'Disconnected';
   String? _sessionToken;
   String? _connectedServerName;
   String? _connectedServerIp;
@@ -108,11 +115,12 @@ class MobileControllerEngine {
   DartPadAppSettings get settings => _settings;
   ControllerState get currentState => _currentState;
   bool get isConnected => _isConnected;
+  String get transportMode => _transportMode;
   String? get connectedServerName => _connectedServerName;
   String? get connectedServerIp => _connectedServerIp;
   String? get lastConnectionError => _lastConnectionError;
   double get lastRttMs => _lastRttMs;
-  int get packetsSent => _sender?.packetsSent ?? 0;
+  int get packetsSent => (_sender?.packetsSent ?? 0) + _wsPacketsSent;
   RumbleEvent? get lastRumble => _lastRumble;
   List<DiscoveredReceiver> get discoveredReceivers => _discoveredReceivers;
 
@@ -215,7 +223,10 @@ class MobileControllerEngine {
   }
 
   Future<void> _tryAutoConnectTick() async {
-    if (_isConnected || _isAttemptingAutoConnect || !_settings.autoPairEnabled) {
+    if (_isConnected ||
+        _isAttemptingAutoConnect ||
+        _isManualConnectInFlight ||
+        !_settings.autoPairEnabled) {
       return;
     }
     _isAttemptingAutoConnect = true;
@@ -223,6 +234,7 @@ class MobileControllerEngine {
       await discoverAndAutoConnect(
         port: _settings.lastConnectedPort,
         timeout: const Duration(milliseconds: 1100),
+        isBackgroundAuto: true,
       );
     } catch (_) {
     } finally {
@@ -439,7 +451,10 @@ class MobileControllerEngine {
     int port = DartPadProtocolConstants.defaultPort,
     Duration timeout = const Duration(milliseconds: 1200),
     String clientDeviceName = 'DartPad Android',
+    bool isBackgroundAuto = false,
   }) async {
+    if (isBackgroundAuto && _isManualConnectInFlight) return false;
+
     // 1. Try saved PC IP + PIN first if previously paired
     if (_settings.lastConnectedIp != null &&
         _settings.lastPairedPin != null &&
@@ -453,10 +468,13 @@ class MobileControllerEngine {
           deviceName: _settings.lastPairedServerName ?? 'Windows PC',
         ),
         clientDeviceName: clientDeviceName,
-        timeout: const Duration(milliseconds: 500),
+        timeout: const Duration(milliseconds: 700),
+        isBackgroundAuto: isBackgroundAuto,
       );
       if (reconnected) return true;
     }
+
+    if (isBackgroundAuto && _isManualConnectInFlight) return false;
 
     // 2. Discover across Wi-Fi & USB subnets (UDP + HTTP fallback)
     final receivers = await discoverReceivers(
@@ -466,11 +484,13 @@ class MobileControllerEngine {
     );
 
     for (final rx in receivers) {
+      if (isBackgroundAuto && _isManualConnectInFlight) return false;
       if (rx.pin != null && rx.pin!.isNotEmpty) {
         final ok = await connectWithPayload(
           rx.toPayload(),
           clientDeviceName: clientDeviceName,
           timeout: const Duration(seconds: 2),
+          isBackgroundAuto: isBackgroundAuto,
         );
         if (ok) return true;
       }
@@ -492,43 +512,73 @@ class MobileControllerEngine {
     );
   }
 
-  /// Connects using any candidate IP inside [payload], trying UDP handshake AND
-  /// checking HTTP `/api/pair` so the user always gets exact success/error feedback.
+  /// Connects using any candidate IP inside [payload], ranking HTTP-reachable IPs
+  /// first and seamlessly falling back from UDP to TCP HTTP/WebSocket (`/api/pair`
+  /// + `/ws-control`) if router/firewall blocks return UDP packets.
   Future<bool> connectWithPayload(
     PairingPayload payload, {
     String clientDeviceName = 'DartPad Android',
     Duration timeout = const Duration(seconds: 3),
+    bool isBackgroundAuto = false,
   }) async {
-    _lastConnectionError = null;
-    final candidates = payload.candidateIps;
-    if (candidates.isEmpty) {
-      _lastConnectionError = 'Alamat IP PC kosong.';
-      return false;
+    if (!isBackgroundAuto) {
+      _isManualConnectInFlight = true;
     }
-
-    for (final ip in candidates) {
-      final singlePayload = PairingPayload(
-        ip: ip,
-        port: payload.port,
-        httpPort: payload.httpPort,
-        pin: payload.pin,
-        deviceName: payload.deviceName,
-      );
-      final ok = await _connectSingleIp(
-        singlePayload,
-        clientDeviceName: clientDeviceName,
-        timeout: timeout,
-      );
-      if (ok) return true;
-      // Stop immediately if PIN was explicitly rejected so we don't try other IPs
-      if (_lastConnectionError?.contains('PIN salah') == true) {
+    try {
+      _lastConnectionError = null;
+      final candidates = payload.candidateIps;
+      if (candidates.isEmpty) {
+        _lastConnectionError = 'Alamat IP PC kosong.';
         return false;
       }
-    }
 
-    _lastConnectionError ??=
-        'Tidak ada jawaban dari ${candidates.join(", ")}:${payload.port}. Pastikan DartPad.exe berjalan, HP & PC di 1 jaringan Wi-Fi/USB, dan Windows Firewall mengizinkan port ${payload.port}.';
-    return false;
+      // Concurrently probe TCP HTTP /api/info when multiple candidate IPs exist
+      // so reachable LAN/Wi-Fi IPs are attempted immediately ahead of dead virtual NICs!
+      var orderedCandidates = candidates;
+      if (candidates.length > 1) {
+        final reachable = <String>[];
+        final others = <String>[];
+        await Future.wait(
+          candidates.map((ip) async {
+            final probe = await _probeHttpReceiver(ip, payload.httpPort, 'LAN');
+            if (probe != null) {
+              reachable.add(ip);
+            } else {
+              others.add(ip);
+            }
+          }),
+        );
+        orderedCandidates = [...reachable, ...others];
+      }
+
+      for (final ip in orderedCandidates) {
+        final singlePayload = PairingPayload(
+          ip: ip,
+          port: payload.port,
+          httpPort: payload.httpPort,
+          pin: payload.pin,
+          deviceName: payload.deviceName,
+        );
+        final ok = await _connectSingleIp(
+          singlePayload,
+          clientDeviceName: clientDeviceName,
+          timeout: timeout,
+        );
+        if (ok) return true;
+        // Stop immediately if PIN was explicitly rejected so we don't try other IPs
+        if (_lastConnectionError?.contains('PIN salah') == true) {
+          return false;
+        }
+      }
+
+      _lastConnectionError ??=
+          'Tidak ada jawaban dari ${orderedCandidates.join(", ")} (UDP:${payload.port} & HTTP:${payload.httpPort}). Pastikan DartPad.exe berjalan & HP+PC di 1 jaringan Wi-Fi/USB.';
+      return false;
+    } finally {
+      if (!isBackgroundAuto) {
+        _isManualConnectInFlight = false;
+      }
+    }
   }
 
   Future<bool> _connectSingleIp(
@@ -604,16 +654,16 @@ class MobileControllerEngine {
       ),
     );
 
-    // Send 3 quick UDP handshake packets (0ms, 250ms, 600ms) for 100% reliability
+    // Phase 1: Try ultra-low-latency UDP handshake first (LAN round-trip < 10 ms)
     socket.send(connectPacket, targetAddr, payload.port);
-    final retry1 = Timer(const Duration(milliseconds: 250), () {
+    final retry1 = Timer(const Duration(milliseconds: 160), () {
       if (!handshakeCompleter.isCompleted) {
         try {
           socket.send(connectPacket, targetAddr, payload.port);
         } catch (_) {}
       }
     });
-    final retry2 = Timer(const Duration(milliseconds: 600), () {
+    final retry2 = Timer(const Duration(milliseconds: 320), () {
       if (!handshakeCompleter.isCompleted) {
         try {
           socket.send(connectPacket, targetAddr, payload.port);
@@ -621,25 +671,224 @@ class MobileControllerEngine {
       }
     });
 
-    final accepted = await handshakeCompleter.future.timeout(
-      timeout,
+    final udpWindow = timeout < const Duration(milliseconds: 520)
+        ? timeout
+        : const Duration(milliseconds: 520);
+    final udpAccepted = await handshakeCompleter.future.timeout(
+      udpWindow,
       onTimeout: () => false,
     );
     retry1.cancel();
     retry2.cancel();
 
-    if (!accepted || _sessionToken == null) {
+    if (udpAccepted && _sessionToken != null) {
+      _isConnected = true;
+      _transportMode = 'UDP 120Hz';
+      _lastConnectionError = null;
+      _savePairedSettings(payload);
+
+      _sender = LowLatencyInputSender(
+        socket: socket,
+        targetAddress: targetAddr,
+        targetPort: payload.port,
+        sessionToken: _sessionToken!,
+        updateRateHz: updateRateHz,
+      )..startLoop();
+
+      _heartbeatTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (_rttClock.elapsedMilliseconds - _lastAckTimeMs > 4000) {
+          unawaited(disconnect(stopAutoPair: false));
+          return;
+        }
+
+        _heartbeatSeq++;
+        final hb = PacketCodec.encodeControl(
+          ControlPacket(
+            type: PacketType.heartbeat,
+            sequence: _heartbeatSeq,
+            timestampMs: _rttClock.elapsedMilliseconds,
+          ),
+        );
+        _socket?.send(hb, targetAddr, payload.port);
+      });
+
+      onConnectionChanged?.call(true, _lastRttMs);
+      return true;
+    }
+
+    if (rejectedReason.isNotEmpty) {
       await disconnect(stopAutoPair: false);
-      if (rejectedReason.isNotEmpty) {
-        _lastConnectionError = 'Ditolak PC: PIN salah ($rejectedReason).';
-      }
+      _lastConnectionError = 'Ditolak PC: PIN salah ($rejectedReason).';
       return false;
     }
 
-    _isConnected = true;
-    _lastConnectionError = null;
+    // Phase 2: Hybrid TCP HTTP (/api/pair) + WebSocket (/ws-control) fallback!
+    // Solves asymmetric/one-way UDP where PC turned green on connect packet
+    // but return UDP accept never reached the phone.
+    await _socketSub?.cancel();
+    _socketSub = null;
+    try {
+      // Send clean disconnect packet first if UDP was ignored on return path;
+      // HTTP /api/pair below will establish an authenticated WebSocket session cleanly.
+      final wsOk = await _pairViaHttpAndAttachWebSocket(
+        payload: payload,
+        clientDeviceName: clientDeviceName,
+        timeout: timeout,
+      );
+      if (wsOk) {
+        _socket?.close();
+        _socket = null;
+        return true;
+      }
+    } catch (_) {}
 
-    // Persist paired PC info to disk so it automatically reconnects even after phone/PC reboot!
+    // If neither UDP nor TCP succeeded, notify PC to drop any partial green indicator
+    try {
+      final disc = PacketCodec.encodeControl(
+        ControlPacket(
+          type: PacketType.disconnect,
+          sequence: 2,
+          timestampMs: _rttClock.elapsedMilliseconds,
+        ),
+      );
+      socket.send(disc, targetAddr, payload.port);
+    } catch (_) {}
+
+    await disconnect(stopAutoPair: false);
+    if (_lastConnectionError?.isEmpty ?? true) {
+      _lastConnectionError = null;
+    }
+    return false;
+  }
+
+  Future<bool> _pairViaHttpAndAttachWebSocket({
+    required PairingPayload payload,
+    required String clientDeviceName,
+    required Duration timeout,
+  }) async {
+    final httpTimeout =
+        timeout < const Duration(milliseconds: 900) ? timeout : const Duration(milliseconds: 1400);
+    final client = HttpClient()..connectionTimeout = httpTimeout;
+    try {
+      final pairSw = Stopwatch()..start();
+      final req = await client
+          .postUrl(Uri.parse('http://${payload.ip}:${payload.httpPort}/api/pair'))
+          .timeout(httpTimeout);
+      req.headers.contentType = ContentType.json;
+      req.write(
+        jsonEncode({
+          'pin': payload.pin,
+          'deviceName': clientDeviceName,
+        }),
+      );
+      final resp = await req.close().timeout(httpTimeout);
+      if (resp.statusCode != 200) return false;
+
+      final body = await resp.transform(utf8.decoder).join();
+      final json = jsonDecode(body) as Map<String, dynamic>;
+      if (json['ok'] != true) {
+        final reason = json['reason']?.toString() ?? 'PIN salah / ditolak PC';
+        _lastConnectionError = 'Ditolak PC: PIN salah ($reason).';
+        return false;
+      }
+
+      final token = json['sessionToken']?.toString();
+      if (token == null || token.isEmpty) return false;
+
+      final wsUri = Uri(
+        scheme: 'ws',
+        host: payload.ip,
+        port: payload.httpPort,
+        path: '/ws-control',
+        queryParameters: {
+          'token': token,
+          'name': clientDeviceName,
+        },
+      );
+      final ws = await WebSocket.connect(wsUri.toString()).timeout(httpTimeout);
+      _wsControl = ws;
+      _wsSequence = 0;
+      _wsPacketsSent = 0;
+
+      _sessionToken = token;
+      _connectedServerName =
+          json['serverName']?.toString() ?? payload.deviceName;
+      _connectedServerIp = payload.ip;
+      _lastRttMs = pairSw.elapsedMilliseconds.toDouble();
+      _lastAckTimeMs = _rttClock.elapsedMilliseconds;
+      _isConnected = true;
+      _transportMode = 'TCP WebSocket';
+      _lastConnectionError = null;
+
+      _wsSub = ws.listen(
+        (dynamic msg) {
+          if (msg is! String) return;
+          try {
+            final data = jsonDecode(msg) as Map<String, dynamic>;
+            final mType = data['type']?.toString();
+            if (mType == 'pong') {
+              _lastAckTimeMs = _rttClock.elapsedMilliseconds;
+              final ts = (data['ts'] as num?)?.toInt() ?? 0;
+              final diff = _rttClock.elapsedMilliseconds - ts;
+              if (diff >= 0 && diff < 10000) {
+                _lastRttMs = diff.toDouble();
+                onConnectionChanged?.call(_isConnected, _lastRttMs);
+              }
+            } else if (mType == 'rumble') {
+              final rumble = RumbleEvent(
+                largeMotor: (data['large'] as num?)?.toDouble() ?? 0.0,
+                smallMotor: (data['small'] as num?)?.toDouble() ?? 0.0,
+                durationMs: (data['durationMs'] as num?)?.toInt() ?? 80,
+              );
+              _lastRumble = rumble;
+              onRumbleReceived?.call(rumble);
+            }
+          } catch (_) {}
+        },
+        onDone: () {
+          if (_wsControl == ws && _isConnected) {
+            unawaited(disconnect(stopAutoPair: false));
+          }
+        },
+        onError: (_) {
+          if (_wsControl == ws && _isConnected) {
+            unawaited(disconnect(stopAutoPair: false));
+          }
+        },
+      );
+
+      _savePairedSettings(payload);
+
+      // 60 Hz keep-alive & binary state sync over WebSocket so PC watchdog stays fed
+      _wsSyncTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
+        _sendWsState(_currentState);
+      });
+
+      _heartbeatTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (_rttClock.elapsedMilliseconds - _lastAckTimeMs > 4500) {
+          unawaited(disconnect(stopAutoPair: false));
+          return;
+        }
+        try {
+          _wsControl?.add(
+            jsonEncode({
+              'type': 'ping',
+              'ts': _rttClock.elapsedMilliseconds,
+            }),
+          );
+        } catch (_) {}
+      });
+
+      onConnectionChanged?.call(true, _lastRttMs);
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  void _savePairedSettings(PairingPayload payload) {
     _settings = _settings.copyWith(
       lastConnectedIp: payload.ip,
       lastConnectedPort: payload.port,
@@ -647,34 +896,33 @@ class MobileControllerEngine {
       lastPairedServerName: _connectedServerName ?? payload.deviceName,
     );
     unawaited(configStore?.saveSettings(_settings) ?? Future.value());
+  }
 
-    _sender = LowLatencyInputSender(
-      socket: socket,
-      targetAddress: targetAddr,
-      targetPort: payload.port,
-      sessionToken: _sessionToken!,
-      updateRateHz: updateRateHz,
-    )..startLoop();
-
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_rttClock.elapsedMilliseconds - _lastAckTimeMs > 4000) {
-        unawaited(disconnect(stopAutoPair: false));
-        return;
-      }
-
-      _heartbeatSeq++;
-      final hb = PacketCodec.encodeControl(
-        ControlPacket(
-          type: PacketType.heartbeat,
-          sequence: _heartbeatSeq,
-          timestampMs: _rttClock.elapsedMilliseconds,
+  void _sendWsState(ControllerState state) {
+    final ws = _wsControl;
+    final token = _sessionToken;
+    if (ws == null || token == null) return;
+    try {
+      _wsSequence = (_wsSequence + 1) & 0xFFFFFFFF;
+      final bytes = PacketCodec.encodeInput(
+        InputPacket(
+          sequence: _wsSequence,
+          timestampMs: _rttClock.elapsedMilliseconds & 0xFFFFFFFF,
+          flags: PairingPayload.computeSessionFlag(token),
+          state: state,
         ),
       );
-      _socket?.send(hb, targetAddr, payload.port);
-    });
+      ws.add(bytes);
+      _wsPacketsSent++;
+    } catch (_) {}
+  }
 
-    onConnectionChanged?.call(true, _lastRttMs);
-    return true;
+  void _flushTransportState({required bool immediate}) {
+    if (_sender != null) {
+      _sender!.updateState(_currentState, immediate: immediate);
+    } else if (_wsControl != null && immediate) {
+      _sendWsState(_currentState);
+    }
   }
 
   /// Handles touch down/up on any layout item:
@@ -775,7 +1023,7 @@ class MobileControllerEngine {
         ? _currentState.copyWith(leftStick: normalized)
         : _currentState.copyWith(rightStick: normalized);
 
-    _sender?.updateState(_currentState, immediate: true);
+    _flushTransportState(immediate: true);
     onStateChanged?.call(_currentState);
   }
 
@@ -784,7 +1032,7 @@ class MobileControllerEngine {
     _activeTouchSources.clear();
     _pressedHardwareKeys.clear();
     _currentState = ControllerState.neutral;
-    _sender?.updateState(_currentState, immediate: true);
+    _flushTransportState(immediate: true);
     onStateChanged?.call(_currentState);
   }
 
@@ -795,6 +1043,17 @@ class MobileControllerEngine {
     releaseAllInputs();
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
+    _wsSyncTimer?.cancel();
+    _wsSyncTimer = null;
+    await _wsSub?.cancel();
+    _wsSub = null;
+    if (_wsControl != null) {
+      try {
+        _wsControl!.add(jsonEncode({'type': 'disconnect'}));
+        await _wsControl!.close();
+      } catch (_) {}
+      _wsControl = null;
+    }
     _sender?.stopLoop();
     _sender = null;
     await _socketSub?.cancel();
@@ -802,6 +1061,7 @@ class MobileControllerEngine {
     _socket?.close();
     _socket = null;
     _isConnected = false;
+    _transportMode = 'Disconnected';
     _sessionToken = null;
     onConnectionChanged?.call(false, 0.0);
   }
@@ -833,7 +1093,7 @@ class MobileControllerEngine {
       rightTrigger: rt,
     );
 
-    _sender?.updateState(_currentState, immediate: immediate);
+    _flushTransportState(immediate: immediate);
     onStateChanged?.call(_currentState);
   }
 }

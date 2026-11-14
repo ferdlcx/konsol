@@ -440,5 +440,129 @@ void main() {
         await tempDir.delete(recursive: true);
       }
     });
+
+    test('Hybrid TCP HTTP (/api/pair) + WebSocket (/ws-control) pairs cleanly even when UDP reply is blocked', () async {
+      final simGamepad = SimulatedGamepadProvider(deviceType: ControllerType.xbox);
+      final srv = DartPadReceiverServer(
+        port: 0,
+        serverName: 'HybridFallback-PC',
+        gamepadProvider: simGamepad,
+        watchdogTimeout: const Duration(milliseconds: 250),
+        customPin: '445566',
+      );
+      await srv.start(bindAddress: InternetAddress.loopbackIPv4);
+
+      final gui = EmbeddedDashboardGui(
+        receiverServer: srv,
+        localIp: '127.0.0.1',
+        preferredPort: 0,
+      );
+      await gui.start(openDesktopWindow: false, bindLoopbackOnly: true);
+      srv.advertisedHttpPort = gui.guiPort;
+
+      // Pick an unused closed UDP port so UDP handshake is guaranteed to timeout/fail!
+      final closedUdpSock = await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final deadUdpPort = closedUdpSock.port;
+      closedUdpSock.close();
+
+      final rumbleCompleter = Completer<RumbleEvent>();
+      final mobileEngine = MobileControllerEngine(
+        onRumbleReceived: (rumble) {
+          if (!rumbleCompleter.isCompleted) rumbleCompleter.complete(rumble);
+        },
+      );
+
+      try {
+        final ok = await mobileEngine.connectWithPayload(
+          PairingPayload(
+            ip: '127.0.0.1',
+            port: deadUdpPort,
+            httpPort: gui.guiPort,
+            pin: '445566',
+            deviceName: 'HybridFallback-PC',
+          ),
+          clientDeviceName: 'Fallback-Phone',
+          timeout: const Duration(seconds: 2),
+        );
+
+        expect(ok, isTrue);
+        expect(mobileEngine.isConnected, isTrue);
+        expect(mobileEngine.transportMode, equals('TCP WebSocket'));
+        expect(mobileEngine.connectedServerName, equals('HybridFallback-PC'));
+
+        // Send controller button & stick over WebSocket transport
+        mobileEngine.handleDirectButton('test_a', GamepadButton.south, true);
+        mobileEngine.handleJoystickMove(isLeftStick: true, rawX: 0.75, rawY: -0.4);
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+
+        expect(simGamepad.lastState.isPressed(GamepadButton.south), isTrue);
+        expect(simGamepad.lastState.leftStick.x, greaterThan(0.5));
+
+        // Verify rumble from PC travels back down WebSocket /ws-control!
+        srv.sendRumbleToClient(
+          const RumbleEvent(largeMotor: 0.85, smallMotor: 0.65, durationMs: 140),
+        );
+        final r = await rumbleCompleter.future.timeout(const Duration(seconds: 2));
+        expect(r.largeMotor, closeTo(0.85, 0.02));
+        expect(r.durationMs, equals(140));
+      } finally {
+        await mobileEngine.disconnect();
+        await gui.stop();
+        await srv.stop();
+      }
+    });
+
+    test('GET /pad serves Web Touch Gamepad and /ws-control accepts browser JSON inputs', () async {
+      final simGamepad = SimulatedGamepadProvider(deviceType: ControllerType.playstation);
+      final srv = DartPadReceiverServer(
+        port: 0,
+        serverName: 'WebPad-PC',
+        gamepadProvider: simGamepad,
+        customPin: '778899',
+      );
+      await srv.start(bindAddress: InternetAddress.loopbackIPv4);
+
+      final gui = EmbeddedDashboardGui(
+        receiverServer: srv,
+        localIp: '127.0.0.1',
+        preferredPort: 0,
+      );
+      await gui.start(openDesktopWindow: false, bindLoopbackOnly: true);
+
+      final httpClient = HttpClient();
+      WebSocket? ws;
+      try {
+        final req = await httpClient.getUrl(
+          Uri.parse('http://127.0.0.1:${gui.guiPort}/pad?pin=778899'),
+        );
+        final resp = await req.close();
+        expect(resp.statusCode, equals(200));
+        final html = await utf8.decoder.bind(resp).join();
+        expect(html, contains('DartPad Web Controller'));
+        expect(html, contains('/ws-control'));
+
+        ws = await WebSocket.connect(
+          'ws://127.0.0.1:${gui.guiPort}/ws-control?pin=778899&name=Chrome-WebPad',
+        );
+        ws.add(
+          jsonEncode({
+            'type': 'input',
+            'buttons': ['north', 'rightShoulder'],
+            'lx': 0.6,
+            'ly': -0.3,
+          }),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+
+        expect(simGamepad.lastState.isPressed(GamepadButton.north), isTrue);
+        expect(simGamepad.lastState.isPressed(GamepadButton.rightShoulder), isTrue);
+        expect(simGamepad.lastState.leftStick.x, closeTo(0.6, 0.02));
+      } finally {
+        await ws?.close();
+        httpClient.close(force: true);
+        await gui.stop();
+        await srv.stop();
+      }
+    });
   });
 }

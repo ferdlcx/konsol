@@ -9,8 +9,13 @@ class QrPairingRenderer {
   /// Generates a 2D boolean matrix (`true` = dark module, `false` = light module)
   /// for rendering in a GUI or terminal.
   static List<List<bool>> generateMatrix(PairingPayload payload) {
+    return generateMatrixFromText(payload.toQrUriString());
+  }
+
+  /// Generates a 2D boolean QR matrix for any URI/text payload.
+  static List<List<bool>> generateMatrixFromText(String data) {
     final qrCode = QrCode.fromData(
-      data: payload.toQrUriString(),
+      data: data,
       errorCorrectLevel: QrErrorCorrectLevel.L,
     );
     final qrImage = QrImage(qrCode);
