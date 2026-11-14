@@ -403,5 +403,42 @@ void main() {
         await modeServer.stop();
       }
     });
+
+    test('PureDartWindowsGamepadProvider.isValidPeExportDll rejects 0-export DLLs and accepts valid PE32+ export tables', () async {
+      final tempDir = await Directory.systemTemp.createTemp('dartpad_pe_test_');
+      try {
+        // Construct minimal 512-byte PE32+ image with zero Export Directory (broken v0.3.0 DLL)
+        final stubBytes = List<int>.filled(512, 0);
+        stubBytes[0] = 0x4D; // 'M'
+        stubBytes[1] = 0x5A; // 'Z'
+        stubBytes[0x3C] = 0x80; // e_lfanew = 0x80
+        stubBytes[0x80] = 0x50; // 'P'
+        stubBytes[0x81] = 0x45; // 'E'
+        // Optional header at 0x80 + 24 = 0x98, Magic = 0x020B (PE32+)
+        stubBytes[0x98] = 0x0B;
+        stubBytes[0x99] = 0x02;
+
+        final brokenDll = File('${tempDir.path}/broken_ViGEmClient.dll')
+          ..writeAsBytesSync(stubBytes);
+        expect(PureDartWindowsGamepadProvider.isValidPeExportDll(brokenDll), isFalse);
+
+        // Set DataDirectory[0] (offset 0x98 + 112 = 0x108): RVA = 0x2000, Size = 0x150
+        stubBytes[0x108] = 0x00;
+        stubBytes[0x109] = 0x20;
+        stubBytes[0x10C] = 0x50;
+        stubBytes[0x10D] = 0x01;
+
+        final validDll = File('${tempDir.path}/valid_ViGEmClient.dll')
+          ..writeAsBytesSync(stubBytes);
+        expect(PureDartWindowsGamepadProvider.isValidPeExportDll(validDll), isTrue);
+
+        expect(
+          PureDartWindowsGamepadProvider.formatVigemError(0xE0000001),
+          contains('ViGEmBus'),
+        );
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    });
   });
 }

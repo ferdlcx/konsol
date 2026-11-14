@@ -2,15 +2,15 @@
 
 **DartPad** mengubah smartphone Android menjadi virtual gamepad **Xbox 360** atau **PlayStation (DualShock 4)** untuk Windows 10/11 melalui **Wi-Fi** maupun **USB Tethering**, dengan latensi sangat rendah (`120 Hz` + *Instant Edge-Triggered Dispatch `0 ms`*).
 
-## 📥 Download Rilis Terbaru (`v0.3.0`) — Hardware Gamepad Nyata + Minimalist Studio
+## 📥 Download Rilis Terbaru (`v0.3.1`) — Hardware Gamepad Nyata + Minimalist Studio
 
-* **Halaman GitHub Release**: [https://github.com/ferdlcx/konsol/releases/tag/v0.3.0](https://github.com/ferdlcx/konsol/releases/tag/v0.3.0)
+* **Halaman GitHub Release**: [https://github.com/ferdlcx/konsol/releases/tag/v0.3.1](https://github.com/ferdlcx/konsol/releases/tag/v0.3.1)
 * **💿 Windows PC Setup Installer (PALING DIREKOMENDASIKAN — Otomatis Pasang Driver ViGEmBus, `ViGEmClient.dll`, Shortcut, & Firewall Rule UDP `42100` / TCP `42101`)**:
-  [Download `DartPad-Setup.exe`](https://github.com/ferdlcx/konsol/releases/download/v0.3.0/DartPad-Setup.exe)
+  [Download `DartPad-Setup.exe`](https://github.com/ferdlcx/konsol/releases/download/v0.3.1/DartPad-Setup.exe)
 * **💻 Windows PC Portable Single Launcher (`1 File .exe` Tanpa Blink CMD + 1-Klik Pemasang ViGEmBus di Dashboard)**:
-  [Download `DartPad.exe`](https://github.com/ferdlcx/konsol/releases/download/v0.3.0/DartPad.exe)
+  [Download `DartPad.exe`](https://github.com/ferdlcx/konsol/releases/download/v0.3.1/DartPad.exe)
 * **📱 Android Mobile Controller (`.apk` — Minimalist Studio UI, Tombol `L3`/`R3`, Simbol Asli PlayStation `△ ○ □ ✕`, Kamera QR Anti-Error, Getar Nyata & Update In-App OTA)**:
-  [Download `dartpad-mobile-android.apk`](https://github.com/ferdlcx/konsol/releases/download/v0.3.0/dartpad-mobile-android.apk)
+  [Download `dartpad-mobile-android.apk`](https://github.com/ferdlcx/konsol/releases/download/v0.3.1/dartpad-mobile-android.apk)
 
 > **Catatan Penting Agar Game Membaca Controller & Keamanan OS**:
 > * **Agar Game PC Mendeteksi Stik Xbox 360 / PS4**: Game Windows membaca perangkat XInput/DualShock melalui driver kernel **ViGEmBus** (`ViGEmBus` + `ViGEmClient.dll`). Gunakan **`DartPad-Setup.exe`** agar driver otomatis terpasang, atau jika memakai portable **`DartPad.exe`**, klik tombol **"⬇️ Pasang Driver Virtual Gamepad (ViGEmBus)"** satu kali di Dashboard PC.

@@ -274,6 +274,23 @@ Future<int> _runButtonResponseSelfTest(
   stdout.writeln(
       '[PASS] Combo Button (LB + RB + Y) + Left Stick responded on Receiver!');
 
+  if (Platform.isWindows) {
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final dllNextToExe = File('$exeDir${Platform.pathSeparator}ViGEmClient.dll');
+    final dllInCwd = File('ViGEmClient.dll');
+    if (dllNextToExe.existsSync() || dllInCwd.existsSync()) {
+      final provider = server.gamepadProvider;
+      if (provider is PureDartWindowsGamepadProvider && !provider.hasVigemDll) {
+        stderr.writeln(
+            '[FAIL] ViGEmClient.dll exists on Windows but failed to load exported symbols: ${provider.driverStatusSummary}');
+        clientSocket.close();
+        return 1;
+      }
+      stdout.writeln(
+          '[PASS] ViGEmClient.dll PE exports & FFI symbol bindings verified on Windows!');
+    }
+  }
+
   clientSocket.close();
   stdout.writeln('[SELF-TEST] ALL CHECKS PASSED!');
   return 0;

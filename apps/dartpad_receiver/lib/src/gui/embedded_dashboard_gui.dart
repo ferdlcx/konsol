@@ -13,7 +13,9 @@ import '../virtual_device/pure_dart_windows_provider.dart';
 class EmbeddedDashboardGui {
   static const String officialVigemBusUrl =
       'https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe';
-  static const String officialVigemClientAssetUrl =
+  static String get officialVigemClientAssetUrl =>
+      'https://github.com/ferdlcx/konsol/releases/download/v${DartPadAppSettings.appVersion}/ViGEmClient.dll';
+  static const String fallbackVigemClientAssetUrl =
       'https://github.com/ferdlcx/konsol/releases/latest/download/ViGEmClient.dll';
 
   final DartPadReceiverServer receiverServer;
@@ -318,8 +320,17 @@ class EmbeddedDashboardGui {
     try {
       final exeDir = File(Platform.resolvedExecutable).parent.path;
       final dllFile = File('$exeDir\\ViGEmClient.dll');
-      if (!dllFile.existsSync()) {
-        await _downloadFile(officialVigemClientAssetUrl, dllFile);
+      if (!dllFile.existsSync() ||
+          !PureDartWindowsGamepadProvider.isValidPeExportDll(dllFile)) {
+        if (dllFile.existsSync()) {
+          try {
+            dllFile.deleteSync();
+          } catch (_) {}
+        }
+        var okDll = await _downloadFile(officialVigemClientAssetUrl, dllFile);
+        if (!okDll) {
+          okDll = await _downloadFile(fallbackVigemClientAssetUrl, dllFile);
+        }
       }
 
       // First re-init in case DLL was just downloaded and ViGEmBus is already installed
@@ -762,6 +773,18 @@ ws.onmessage = (ev) => {
   if (data.deviceType) {
     document.getElementById('modeXbox').className = data.deviceType === 'xbox' ? 'active' : '';
     document.getElementById('modePs').className = data.deviceType === 'playstation' ? 'active' : '';
+  }
+  if (typeof data.driverActive === 'boolean') {
+    const banner = document.getElementById('driverBanner');
+    banner.className = 'driver-banner ' + (data.driverActive ? 'ok' : 'warn');
+    document.getElementById('driverTitle').textContent = data.driverActive
+        ? 'Driver Gamepad Aktif — Terbaca di Game PC'
+        : 'Driver Gamepad (ViGEmBus) Belum Aktif';
+    if (data.driverStatus) {
+      document.getElementById('driverSub').textContent = data.driverStatus;
+    }
+    const vBtn = document.getElementById('vigemBtn');
+    if (vBtn && data.driverActive) vBtn.remove();
   }
 
   const st = data.state;

@@ -1,5 +1,6 @@
 import 'dart:ffi' as ffi;
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dartpad_protocol/dartpad_protocol.dart';
 import 'package:ffi/ffi.dart';
@@ -138,6 +139,17 @@ typedef _VigemTargetDs4UpdateDart = int Function(
   _Ds4Report report,
 );
 
+typedef _VigemX360GetUserIndexNative = ffi.Uint32 Function(
+  ffi.Pointer<ffi.Void> client,
+  ffi.Pointer<ffi.Void> target,
+  ffi.Pointer<ffi.Uint32> index,
+);
+typedef _VigemX360GetUserIndexDart = int Function(
+  ffi.Pointer<ffi.Void> client,
+  ffi.Pointer<ffi.Void> target,
+  ffi.Pointer<ffi.Uint32> index,
+);
+
 typedef _VigemX360GetOutputNative = ffi.Uint32 Function(
   ffi.Pointer<ffi.Void> client,
   ffi.Pointer<ffi.Void> target,
@@ -199,6 +211,7 @@ class PureDartWindowsGamepadProvider implements GamepadProvider {
   _VigemTargetRemoveDart? _targetRemoveFn;
   _VigemTargetX360UpdateDart? _x360UpdateFn;
   _VigemTargetDs4UpdateDart? _ds4UpdateFn;
+  _VigemX360GetUserIndexDart? _x360GetUserIndexFn;
   _VigemX360GetOutputDart? _x360GetOutputFn;
   _VigemDs4GetOutputDart? _ds4GetOutputFn;
   _VigemFreeDart? _vigemDisconnectFn;
@@ -299,6 +312,54 @@ class PureDartWindowsGamepadProvider implements GamepadProvider {
     return null;
   }
 
+  /// Inspects a Windows DLL's PE header without loading/locking it in memory.
+  /// Returns `true` only if the DLL has a non-empty PE Export Directory
+  /// (rejects stub/empty DLLs such as v0.3.0's 10KB build without exports).
+  static bool isValidPeExportDll(File file) {
+    try {
+      if (!file.existsSync()) return false;
+      final bytes = file.readAsBytesSync();
+      if (bytes.length < 0x100) return false;
+      // Check DOS signature 'MZ'
+      if (bytes[0] != 0x4D || bytes[1] != 0x5A) return false;
+      final bd = ByteData.sublistView(bytes);
+      final lfanew = bd.getUint32(0x3C, Endian.little);
+      if (lfanew + 0xA8 > bytes.length) return false;
+      // Check 'PE\0\0'
+      if (bytes[lfanew] != 0x50 ||
+          bytes[lfanew + 1] != 0x45 ||
+          bytes[lfanew + 2] != 0x00 ||
+          bytes[lfanew + 3] != 0x00) {
+        return false;
+      }
+      final optHeaderStart = lfanew + 24;
+      final magic = bd.getUint16(optHeaderStart, Endian.little);
+      // PE32+ (64-bit) = 0x20B (DataDirectory starts at +112), PE32 = 0x10B (+96)
+      final dataDirOffset = magic == 0x020B
+          ? optHeaderStart + 112
+          : (magic == 0x010B ? optHeaderStart + 96 : -1);
+      if (dataDirOffset < 0 || dataDirOffset + 8 > bytes.length) return false;
+      final exportRva = bd.getUint32(dataDirOffset, Endian.little);
+      final exportSize = bd.getUint32(dataDirOffset + 4, Endian.little);
+      return exportRva > 0 && exportSize > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static String formatVigemError(int code) {
+    final u = code & 0xFFFFFFFF;
+    return switch (u) {
+      0x20000000 => 'OK',
+      0xE0000001 => 'Driver ViGEmBus belum terinstal di Windows',
+      0xE0000002 => 'Semua slot controller penuh (maks 4 Xbox / DS4)',
+      0xE0000003 => 'Target controller tidak valid',
+      0xE0000008 => 'Versi driver ViGEmBus tidak cocok (pasang v1.22.0)',
+      0xE0000009 => 'Gagal membuka akses ke driver ViGEmBus',
+      _ => 'ViGEm error 0x${u.toRadixString(16).toUpperCase()}',
+    };
+  }
+
   ffi.DynamicLibrary _openVigemLibrary() {
     final exeDir = File(Platform.resolvedExecutable).parent.path;
     final candidates = <String>[
@@ -312,8 +373,13 @@ class PureDartWindowsGamepadProvider implements GamepadProvider {
 
     Object? lastErr;
     for (final path in candidates) {
-      if (path.contains(Platform.pathSeparator) && !File(path).existsSync()) {
-        continue;
+      final f = File(path);
+      if (path.contains(Platform.pathSeparator)) {
+        if (!f.existsSync()) continue;
+        if (!isValidPeExportDll(f)) {
+          lastErr = 'DLL lama/rusak tanpa export symbols: $path';
+          continue;
+        }
       }
       try {
         return ffi.DynamicLibrary.open(path);
@@ -321,7 +387,7 @@ class PureDartWindowsGamepadProvider implements GamepadProvider {
         lastErr = e;
       }
     }
-    throw ArgumentError('ViGEmClient.dll not found ($lastErr)');
+    throw ArgumentError('ViGEmClient.dll tidak valid / tidak ditemukan ($lastErr)');
   }
 
   @override
@@ -346,7 +412,6 @@ class PureDartWindowsGamepadProvider implements GamepadProvider {
     // 2. Bind ViGEmClient.dll + ViGEmBus driver
     try {
       final vigemLib = _openVigemLibrary();
-      _hasVigemDll = true;
 
       _allocFn = vigemLib
           .lookup<ffi.NativeFunction<_VigemAllocNative>>('vigem_alloc')
@@ -382,6 +447,11 @@ class PureDartWindowsGamepadProvider implements GamepadProvider {
             'vigem_target_ds4_update',
           )
           .asFunction<_VigemTargetDs4UpdateDart>();
+      _x360GetUserIndexFn = vigemLib
+          .lookup<ffi.NativeFunction<_VigemX360GetUserIndexNative>>(
+            'vigem_target_x360_get_user_index',
+          )
+          .asFunction<_VigemX360GetUserIndexDart>();
       _x360GetOutputFn = vigemLib
           .lookup<ffi.NativeFunction<_VigemX360GetOutputNative>>(
             'vigem_target_x360_get_output',
@@ -402,6 +472,8 @@ class PureDartWindowsGamepadProvider implements GamepadProvider {
           .lookup<ffi.NativeFunction<_VigemFreeNative>>('vigem_target_free')
           .asFunction<_VigemFreeDart>();
 
+      _hasVigemDll = true;
+
       final client = _allocFn!();
       if (client == ffi.nullptr) {
         _statusMessage = 'Gagal alokasi ViGEm client';
@@ -414,30 +486,50 @@ class PureDartWindowsGamepadProvider implements GamepadProvider {
         _vigemFreeFn!(client);
         _hasNativeVigem = false;
         _statusMessage = connRes == _vigemErrorBusNotFound
-            ? 'Driver ViGEmBus belum terinstal di Windows (klik Pasang Driver ViGEmBus agar game membaca controller!)'
-            : 'ViGEmBus error 0x${connRes.toRadixString(16).toUpperCase()}';
+            ? 'Driver ViGEmBus belum terinstal di Windows (klik Pasang ViGEmBus agar game membaca controller)'
+            : formatVigemError(connRes);
         return true;
       }
 
       _vigemClient = client;
       if (_attachTarget(_deviceType)) {
         _hasNativeVigem = true;
-        _statusMessage = _deviceType == ControllerType.xbox
-            ? 'Virtual Xbox 360 Controller Aktif (Game Ready)'
-            : 'Virtual Sony DualShock 4 Aktif (PS Game Ready)';
+        _statusMessage = _buildActiveStatus(_deviceType);
       } else {
         _hasNativeVigem = false;
         _statusMessage =
-            'Gagal memasang virtual target (0x${_lastVigemError.toRadixString(16).toUpperCase()})';
+            'Gagal memasang virtual target (${formatVigemError(_lastVigemError)})';
       }
-    } catch (_) {
+    } catch (e) {
       _hasVigemDll = false;
       _hasNativeVigem = false;
       _statusMessage =
-          'ViGEmClient.dll / ViGEmBus tidak ditemukan — gunakan DartPad-Setup.exe atau klik Pasang Driver ViGEmBus';
+          'ViGEmClient.dll perlu diperbarui / dipasang — klik "Pasang ViGEmBus" ($e)';
     }
 
     return true;
+  }
+
+  String _buildActiveStatus(ControllerType type) {
+    if (type == ControllerType.playstation) {
+      return 'Virtual Sony DualShock 4 Aktif (HidGame / PS Ready)';
+    }
+    var slotLabel = '';
+    if (_vigemClient != null &&
+        _vigemTarget != null &&
+        _x360GetUserIndexFn != null) {
+      final idxPtr = calloc<ffi.Uint32>();
+      try {
+        final res = _x360GetUserIndexFn!(_vigemClient!, _vigemTarget!, idxPtr);
+        if (res == _vigemErrorNone) {
+          slotLabel = ' • Player #${idxPtr.value + 1}';
+        }
+      } catch (_) {
+      } finally {
+        calloc.free(idxPtr);
+      }
+    }
+    return 'Virtual Xbox 360 Aktif$slotLabel (XInput Game Ready)';
   }
 
   bool _attachTarget(ControllerType type) {
@@ -479,12 +571,12 @@ class PureDartWindowsGamepadProvider implements GamepadProvider {
         _vigemTarget = null;
       }
       if (_attachTarget(nextType)) {
-        _statusMessage = nextType == ControllerType.xbox
-            ? 'Virtual Xbox 360 Controller Aktif (Game Ready)'
-            : 'Virtual Sony DualShock 4 Aktif (PS Game Ready)';
+        _statusMessage = _buildActiveStatus(nextType);
         return true;
       }
       _hasNativeVigem = false;
+      _statusMessage =
+          'Gagal mengganti mode controller (${formatVigemError(_lastVigemError)})';
       return false;
     }
     return false;

@@ -60,16 +60,33 @@ jobs:
       - name: Build Official ViGEmClient.dll & Fetch Signed ViGEmBus Driver v1.22.0
         run: |
           git clone --depth 1 https://github.com/nefarius/ViGEmClient.git vigem_src
-          cmake -S vigem_src -B vigem_src/build -A x64 -DViGEmClient_DLL=ON
+          Add-Content -Path "vigem_src\CMakeLists.txt" -Value "`ntarget_compile_definitions(ViGEmClientShared PRIVATE VIGEM_DYNAMIC VIGEM_EXPORTS)"
+          cmake -S vigem_src -B vigem_src/build -A x64 -DViGEmClient_DLL=ON -DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
           cmake --build vigem_src/build --config Release --target ViGEmClientShared
           $dll = Get-ChildItem -Path vigem_src/build -Recurse -Filter "ViGEmClient.dll" | Select-Object -First 1
           if (-not $dll) { throw "ViGEmClient.dll build failed" }
           Copy-Item $dll.FullName .\ViGEmClient.dll -Force
+
+          # Verify ViGEmClient.dll actually exports C symbols & uses static CRT (no VCRUNTIME140.dll)
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio" -Recurse -Filter "dumpbin.exe" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "Hostx64\\x64" } | Select-Object -First 1
+          if ($dumpbin) {
+            $exports = & $dumpbin.FullName /exports .\ViGEmClient.dll | Out-String
+            Write-Host $exports
+            if ($exports -notmatch "vigem_alloc" -or $exports -notmatch "vigem_target_x360_update" -or $exports -notmatch "vigem_target_ds4_update" -or $exports -notmatch "vigem_target_x360_get_user_index") {
+              throw "ViGEmClient.dll is missing required exported functions!"
+            }
+            $deps = & $dumpbin.FullName /dependents .\ViGEmClient.dll | Out-String
+            Write-Host $deps
+            if ($deps -match "VCRUNTIME140") {
+              throw "ViGEmClient.dll should link CRT statically (/MT), not depend on VCRUNTIME140.dll!"
+            }
+          }
           Remove-Item -Recurse -Force vigem_src
 
           Invoke-WebRequest -Uri "https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe" -OutFile ".\ViGEmBus_1.22.0_x64_x86_arm64.exe"
 
-      - name: Verify DartPad.exe --self-test on Windows
+      - name: Verify DartPad.exe --self-test & ViGEmClient.dll Symbol Loading on Windows
         run: .\DartPad.exe --self-test
 
       - name: Build Windows Setup Installer (DartPad-Setup.exe via Inno Setup)
@@ -93,8 +110,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.0' }}
-          name: "DartPad ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.0' }} — Windows Installer (DartPad-Setup.exe), Portable EXE & Android APK"
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.1' }}
+          name: "DartPad ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.1' }} — Windows Installer (DartPad-Setup.exe), Portable EXE & Android APK"
           files: |
             release-output/DartPad-Setup.exe
             DartPad.exe
@@ -132,7 +149,7 @@ jobs:
           flutter pub get
           flutter analyze
           BUILD_NUMBER=$(( $(git rev-list --count HEAD) + 20 ))
-          flutter build apk --release --build-name=0.3.0 --build-number=$BUILD_NUMBER
+          flutter build apk --release --build-name=0.3.1 --build-number=$BUILD_NUMBER
           cp build/app/outputs/flutter-apk/app-release.apk dartpad-mobile-android.apk
 
       - name: Upload Android APK Artifact
@@ -145,6 +162,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.0' }}
-          name: "DartPad ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.0' }} — Windows Installer (DartPad-Setup.exe), Portable EXE & Android APK"
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.1' }}
+          name: "DartPad ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.1' }} — Windows Installer (DartPad-Setup.exe), Portable EXE & Android APK"
           files: apps/dartpad_mobile/dartpad-mobile-android.apk
