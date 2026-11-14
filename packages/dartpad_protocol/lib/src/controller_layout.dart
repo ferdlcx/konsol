@@ -233,10 +233,10 @@ class ControllerLayout {
     String lbl(GamepadButton b) => preset.labelFor(b);
 
     return ControllerLayout(
-      id: 'xbox_authentic_v2',
-      name: 'Xbox Authentic Layout (Big Controls)',
+      id: 'xbox_authentic_v3',
+      name: 'Minimalist Studio Layout (L3/R3 Ready)',
       items: [
-        // 1. Left Analog Stick (~1.5x diameter / ~2.25x touch area, Upper-Left)
+        // 1. Left Analog Stick (Upper-Left)
         const ButtonLayoutItem(
           id: 'left_stick',
           label: 'LS',
@@ -247,7 +247,7 @@ class ControllerLayout {
           actions: [GamepadButton.leftStick],
         ),
 
-        // 2. D-Pad Cross (Lower-Left Inner, well separated from LS)
+        // 2. D-Pad Cross (Lower-Left Inner)
         const ButtonLayoutItem(
           id: 'dpad',
           label: 'D-Pad',
@@ -263,7 +263,29 @@ class ControllerLayout {
           ],
         ),
 
-        // 3. Right Analog Stick (Lower-Right Inner, well separated from ABXY)
+        // 3. Dedicated L3 & R3 Stick-Click Buttons (Zero Overlap, Thumb Accessible)
+        ButtonLayoutItem(
+          id: 'btn_l3',
+          label: lbl(GamepadButton.leftStick),
+          type: LayoutElementType.singleButton,
+          x: 0.335,
+          y: 0.43,
+          scale: 0.88,
+          colorHex: 0xFF22262E,
+          actions: const [GamepadButton.leftStick],
+        ),
+        ButtonLayoutItem(
+          id: 'btn_r3',
+          label: lbl(GamepadButton.rightStick),
+          type: LayoutElementType.singleButton,
+          x: 0.615,
+          y: 0.43,
+          scale: 0.88,
+          colorHex: 0xFF22262E,
+          actions: const [GamepadButton.rightStick],
+        ),
+
+        // 4. Right Analog Stick (Lower-Right Inner)
         const ButtonLayoutItem(
           id: 'right_stick',
           label: 'RS',
@@ -274,7 +296,7 @@ class ControllerLayout {
           actions: [GamepadButton.rightStick],
         ),
 
-        // 4. Top Left Triggers & Shoulders (LT, LB — ~2x larger ergonomic pads)
+        // 5. Top Left Triggers & Shoulders (LT, LB)
         ButtonLayoutItem(
           id: 'btn_lt',
           label: lbl(GamepadButton.leftTrigger),
@@ -282,7 +304,7 @@ class ControllerLayout {
           x: 0.08,
           y: 0.10,
           scale: 1.55,
-          colorHex: 0xFF222B3A,
+          colorHex: 0xFF1E222A,
           actions: const [GamepadButton.leftTrigger],
         ),
         ButtonLayoutItem(
@@ -292,11 +314,11 @@ class ControllerLayout {
           x: 0.255,
           y: 0.10,
           scale: 1.55,
-          colorHex: 0xFF222B3A,
+          colorHex: 0xFF1E222A,
           actions: const [GamepadButton.leftShoulder],
         ),
 
-        // 5. Top Right Shoulders & Triggers (RB, RT — ~2x larger ergonomic pads)
+        // 6. Top Right Shoulders & Triggers (RB, RT)
         ButtonLayoutItem(
           id: 'btn_rb',
           label: lbl(GamepadButton.rightShoulder),
@@ -304,7 +326,7 @@ class ControllerLayout {
           x: 0.745,
           y: 0.10,
           scale: 1.55,
-          colorHex: 0xFF222B3A,
+          colorHex: 0xFF1E222A,
           actions: const [GamepadButton.rightShoulder],
         ),
         ButtonLayoutItem(
@@ -314,53 +336,53 @@ class ControllerLayout {
           x: 0.92,
           y: 0.10,
           scale: 1.55,
-          colorHex: 0xFF222B3A,
+          colorHex: 0xFF1E222A,
           actions: const [GamepadButton.rightTrigger],
         ),
 
-        // 6. Upper-Right Diamond Face Buttons (Y, X, B, A — ~2x larger thumbs)
+        // 7. Upper-Right Diamond Face Buttons (Y/△, X/□, B/○, A/✕)
         ButtonLayoutItem(
           id: 'btn_north',
-          label: lbl(GamepadButton.north), // Y (Yellow)
+          label: lbl(GamepadButton.north),
           type: LayoutElementType.singleButton,
           x: 0.855,
           y: 0.34,
           scale: 1.72,
-          colorHex: 0xFFF5B000,
+          colorHex: 0xFF2A261C,
           actions: const [GamepadButton.north],
         ),
         ButtonLayoutItem(
           id: 'btn_west',
-          label: lbl(GamepadButton.west), // X (Blue)
+          label: lbl(GamepadButton.west),
           type: LayoutElementType.singleButton,
           x: 0.755,
           y: 0.57,
           scale: 1.72,
-          colorHex: 0xFF0078D7,
+          colorHex: 0xFF1D2636,
           actions: const [GamepadButton.west],
         ),
         ButtonLayoutItem(
           id: 'btn_east',
-          label: lbl(GamepadButton.east), // B (Red)
+          label: lbl(GamepadButton.east),
           type: LayoutElementType.singleButton,
           x: 0.945,
           y: 0.57,
           scale: 1.72,
-          colorHex: 0xFFE81123,
+          colorHex: 0xFF321E22,
           actions: const [GamepadButton.east],
         ),
         ButtonLayoutItem(
           id: 'btn_south',
-          label: lbl(GamepadButton.south), // A (Green)
+          label: lbl(GamepadButton.south),
           type: LayoutElementType.singleButton,
           x: 0.855,
           y: 0.81,
           scale: 1.72,
-          colorHex: 0xFF107C10,
+          colorHex: 0xFF1B2B23,
           actions: const [GamepadButton.south],
         ),
 
-        // 7. Center System Buttons (View, Xbox Guide, Menu — below top bar)
+        // 8. Center System Buttons (View/Share, Guide/PS, Menu/Options)
         ButtonLayoutItem(
           id: 'btn_select',
           label: lbl(GamepadButton.select),
@@ -368,7 +390,7 @@ class ControllerLayout {
           x: 0.415,
           y: 0.25,
           scale: 0.78,
-          colorHex: 0xFF232D3F,
+          colorHex: 0xFF1D2026,
           actions: const [GamepadButton.select],
         ),
         ButtonLayoutItem(
@@ -378,7 +400,7 @@ class ControllerLayout {
           x: 0.495,
           y: 0.24,
           scale: 0.90,
-          colorHex: 0xFF107C10,
+          colorHex: 0xFF262A34,
           actions: const [GamepadButton.guide],
         ),
         ButtonLayoutItem(
@@ -388,11 +410,11 @@ class ControllerLayout {
           x: 0.575,
           y: 0.25,
           scale: 0.78,
-          colorHex: 0xFF232D3F,
+          colorHex: 0xFF1D2026,
           actions: const [GamepadButton.start],
         ),
 
-        // 8. Built-in Default Combo Buttons:
+        // 9. Built-in Macro / Combo Buttons:
         // (1) Sequential Macro: X -> Y -> A -> A (75ms per step)
         const ButtonLayoutItem(
           id: 'combo_1',
@@ -401,14 +423,14 @@ class ControllerLayout {
           x: 0.475,
           y: 0.41,
           scale: 1.0,
-          colorHex: 0xFFFF4081,
+          colorHex: 0xFF242934,
           comboMode: ComboExecutionMode.sequence,
           stepDelayMs: 75,
           actions: [
-            GamepadButton.west, // X
-            GamepadButton.north, // Y
-            GamepadButton.south, // A
-            GamepadButton.south, // A
+            GamepadButton.west, // X / Square
+            GamepadButton.north, // Y / Triangle
+            GamepadButton.south, // A / Cross
+            GamepadButton.south, // A / Cross
           ],
         ),
         // (2) Instant Combo: LB + RB (Simultaneous)
@@ -419,7 +441,7 @@ class ControllerLayout {
           x: 0.475,
           y: 0.58,
           scale: 1.0,
-          colorHex: 0xFF7C4DFF,
+          colorHex: 0xFF242934,
           comboMode: ComboExecutionMode.simultaneous,
           stepDelayMs: 0,
           actions: [
@@ -472,7 +494,7 @@ class ControllerLayout {
       y: y.clamp(0.06, 0.94),
       scale: scale.clamp(0.4, 2.5),
       opacity: opacity.clamp(0.15, 1.0),
-      colorHex: colorHex ?? 0xFFFF4081,
+      colorHex: colorHex ?? 0xFF242934,
       actions: List.unmodifiable(comboActions),
       comboMode: comboMode,
       stepDelayMs: stepDelayMs.clamp(0, 2000),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dartpad_protocol/dartpad_protocol.dart';
@@ -349,6 +350,57 @@ void main() {
       } finally {
         await engine.disconnect();
         await server.stop();
+      }
+    });
+
+    test('EmbeddedDashboardGui & GamepadProvider support runtime Xbox 360 <-> PlayStation DS4 switching', () async {
+      final simGamepad = SimulatedGamepadProvider(deviceType: ControllerType.xbox);
+      final modeServer = DartPadReceiverServer(
+        port: 0,
+        serverName: 'ModeSwitch-PC',
+        gamepadProvider: simGamepad,
+        customPin: '112233',
+      );
+      await modeServer.start(bindAddress: InternetAddress.loopbackIPv4);
+
+      final gui = EmbeddedDashboardGui(
+        receiverServer: modeServer,
+        localIp: '127.0.0.1',
+        preferredPort: 0,
+      );
+      await gui.start(openDesktopWindow: false, bindLoopbackOnly: true);
+
+      final httpClient = HttpClient();
+      try {
+        expect(simGamepad.deviceType, equals(ControllerType.xbox));
+
+        final switchReq = await httpClient.postUrl(
+          Uri.parse('http://127.0.0.1:${gui.guiPort}/api/switch-mode'),
+        );
+        switchReq.headers.contentType = ContentType.json;
+        switchReq.write(jsonEncode({'type': 'playstation'}));
+        final switchResp = await switchReq.close();
+        final switchJson = jsonDecode(
+          await utf8.decoder.bind(switchResp).join(),
+        ) as Map<String, dynamic>;
+
+        expect(switchJson['ok'], isTrue);
+        expect(switchJson['deviceType'], equals('playstation'));
+        expect(simGamepad.deviceType, equals(ControllerType.playstation));
+
+        final infoReq = await httpClient.getUrl(
+          Uri.parse('http://127.0.0.1:${gui.guiPort}/api/info'),
+        );
+        final infoResp = await infoReq.close();
+        final infoJson = jsonDecode(
+          await utf8.decoder.bind(infoResp).join(),
+        ) as Map<String, dynamic>;
+        expect(infoJson['deviceType'], equals('playstation'));
+        expect(infoJson['version'], equals(DartPadAppSettings.appVersion));
+      } finally {
+        httpClient.close(force: true);
+        await gui.stop();
+        await modeServer.stop();
       }
     });
   });

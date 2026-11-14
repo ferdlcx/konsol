@@ -1,28 +1,47 @@
 import 'dart:async';
+import 'dart:ffi' as ffi;
 import 'dart:io';
 
 import 'package:dartpad_protocol/dartpad_protocol.dart';
 import 'package:dartpad_receiver/dartpad_receiver.dart';
 
+typedef _GetConsoleWindowNative = ffi.IntPtr Function();
+typedef _GetConsoleWindowDart = int Function();
+
+typedef _ShowWindowNative = ffi.Int32 Function(
+  ffi.IntPtr hWnd,
+  ffi.Int32 nCmdShow,
+);
+typedef _ShowWindowDart = int Function(int hWnd, int nCmdShow);
+
 /// Single-file standalone Windows Launcher (`DartPad.exe`).
 ///
 /// Features:
-/// - **100% Pure Dart**: No custom C++ `.dll` file required alongside `DartPad.exe`.
-/// - **Built-in Desktop GUI Dashboard**: Automatically launches the graphical
-///   DartPad Dashboard window (SVG QR Code, 6-digit PIN, Live Gamepad Button
-///   Visualizer, and One-Click Rumble Vibration Tester).
-/// - **`--self-test` Mode**: Verifies end-to-end button, volume trigger, combo,
-///   and GUI dashboard responsiveness.
+/// - **ViGEmBus Xbox 360 + Sony DualShock 4 Virtual Gamepad**: Full XInput & DS4 support.
+/// - **Zero Flicker / Background Friendly**: Removes 120Hz console redraws and hides
+///   the Windows console window after launching the minimalist GUI Dashboard
+///   (unless `--console` or `--self-test` is specified).
+/// - **Single-Instance Detection**: Re-launching opens the existing Dashboard cleanly.
 Future<void> main(List<String> args) async {
   final isSelfTest = args.contains('--self-test');
+  final keepConsole = args.contains('--console');
   final monitor = const LiveControllerMonitor(preset: ControllerType.xbox);
 
-  // 100% Pure-Dart Windows Gamepad Provider (no external custom C++ DLL needed)
+  if (!isSelfTest) {
+    final alreadyRunning =
+        await EmbeddedDashboardGui.tryActivateExistingInstance();
+    if (alreadyRunning) {
+      stdout.writeln('DartPad Receiver already running — opened GUI Dashboard.');
+      return;
+    }
+  }
+
   final provider = PureDartWindowsGamepadProvider(
     deviceType: ControllerType.xbox,
     enableWin32KeyboardFallback: false,
   )..init();
 
+  final shutdownCompleter = Completer<void>();
   EmbeddedDashboardGui? gui;
 
   final server = DartPadReceiverServer(
@@ -31,13 +50,6 @@ Future<void> main(List<String> args) async {
     gamepadProvider: provider,
     onDiagnosticsUpdate: (snapshot) {
       gui?.broadcastSnapshot(snapshot);
-      if (!isSelfTest) {
-        stdout.write('\x1B[2J\x1B[0;0H');
-        stdout.writeln(monitor.formatSnapshot(snapshot));
-        if (gui != null) {
-          stdout.writeln(' GUI Dashboard : ${gui.dashboardUrl}');
-        }
-      }
     },
   );
 
@@ -54,6 +66,11 @@ Future<void> main(List<String> args) async {
     localIp: primaryIp,
     allIps: allIps,
     preferredPort: isSelfTest ? 0 : 42101,
+    onShutdownRequested: () {
+      if (!shutdownCompleter.isCompleted) {
+        shutdownCompleter.complete();
+      }
+    },
   );
   await gui.start(
     openDesktopWindow: !isSelfTest,
@@ -68,14 +85,17 @@ Future<void> main(List<String> args) async {
   );
 
   stdout.writeln('====================================================================');
-  stdout.writeln(' DARTPAD WINDOWS LAUNCHER v${DartPadAppSettings.appVersion} (SINGLE .EXE + GUI DASHBOARD)');
+  stdout.writeln(' DARTPAD RECEIVER v${DartPadAppSettings.appVersion}');
+  stdout.writeln(' Driver     : ${provider.driverStatusSummary}');
   stdout.writeln(' GUI Window : ${gui.dashboardUrl}');
   stdout.writeln(' Local IPs  : ${allIps.isEmpty ? primaryIp : allIps.join(", ")}');
   stdout.writeln(' UDP / HTTP : ${server.boundPort} / ${gui.guiPort}');
   stdout.writeln(' PIN Code   : ${server.pairingPin}');
   stdout.writeln(' QR URI     : ${qrPayload.toQrUriString()}');
   stdout.writeln('--------------------------------------------------------------------');
-  stdout.write(QrPairingRenderer.renderTerminalQr(qrPayload));
+  if (isSelfTest || keepConsole) {
+    stdout.write(QrPairingRenderer.renderTerminalQr(qrPayload));
+  }
   stdout.writeln('====================================================================');
 
   if (isSelfTest) {
@@ -86,10 +106,43 @@ Future<void> main(List<String> args) async {
     exit(exitCode);
   }
 
-  await ProcessSignal.sigint.watch().first;
-  stdout.writeln('\nShutting down DartPad & releasing all buttons...');
+  // Hide blinking Windows CMD console once GUI Dashboard is open so closing CMD
+  // cannot accidentally terminate active controller sessions!
+  if (Platform.isWindows && !keepConsole) {
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    _hideWindowsConsoleWindow();
+  }
+
+  unawaited(
+    ProcessSignal.sigint.watch().first.then((_) {
+      if (!shutdownCompleter.isCompleted) {
+        shutdownCompleter.complete();
+      }
+    }),
+  );
+
+  await shutdownCompleter.future;
   await gui.stop();
   await server.stop();
+  exit(0);
+}
+
+void _hideWindowsConsoleWindow() {
+  if (!Platform.isWindows) return;
+  try {
+    final kernel32 = ffi.DynamicLibrary.open('kernel32.dll');
+    final user32 = ffi.DynamicLibrary.open('user32.dll');
+    final getConsole = kernel32
+        .lookup<ffi.NativeFunction<_GetConsoleWindowNative>>('GetConsoleWindow')
+        .asFunction<_GetConsoleWindowDart>();
+    final showWindow = user32
+        .lookup<ffi.NativeFunction<_ShowWindowNative>>('ShowWindow')
+        .asFunction<_ShowWindowDart>();
+    final hwnd = getConsole();
+    if (hwnd != 0) {
+      showWindow(hwnd, 0); // SW_HIDE = 0
+    }
+  } catch (_) {}
 }
 
 Future<int> _runButtonResponseSelfTest(
@@ -115,7 +168,6 @@ Future<int> _runButtonResponseSelfTest(
     }
   });
 
-  // 1. Connect using QR Payload PIN
   final connectBytes = PacketCodec.encodeControl(
     ControlPacket(
       type: PacketType.connect,
@@ -142,7 +194,7 @@ Future<int> _runButtonResponseSelfTest(
     updateRateHz: 120,
   );
 
-  // 2. Test Instant Button Press (A / South)
+  // 1. Test Instant Button Press (A / South)
   final sw = Stopwatch()..start();
   sender.setButtonPressed(GamepadButton.south, true);
   await Future<void>.delayed(const Duration(milliseconds: 5));
@@ -156,6 +208,16 @@ Future<int> _runButtonResponseSelfTest(
   stdout.writeln(
     '[PASS] Single Button A (south) responded on Receiver! (round-trip < ${(elapsedMicros / 1000).toStringAsFixed(2)} ms)',
   );
+
+  // 2. Test L3 & R3 buttons
+  sender.setButtonPressed(GamepadButton.rightStick, true);
+  await Future<void>.delayed(const Duration(milliseconds: 5));
+  if (!server.currentState.isPressed(GamepadButton.rightStick)) {
+    stderr.writeln('[FAIL] Button R3 (rightStick) did NOT respond on receiver!');
+    clientSocket.close();
+    return 1;
+  }
+  stdout.writeln('[PASS] R3 (rightStick) responded on Receiver!');
 
   // 3. Test Volume Key as Trigger (Volume Down -> RT = 1.0)
   final profile = ControllerProfile.xboxDefault();
@@ -213,14 +275,12 @@ Future<int> _runButtonResponseSelfTest(
       '[PASS] Combo Button (LB + RB + Y) + Left Stick responded on Receiver!');
 
   clientSocket.close();
-  stdout.writeln(
-      '[SELF-TEST] ALL BUTTONS, VOLUME TRIGGERS, & COMBOS RESPONDED PERFECTLY IN SINGLE EXE!');
+  stdout.writeln('[SELF-TEST] ALL CHECKS PASSED!');
   return 0;
 }
 
 /// Detects all active LAN/Wi-Fi/USB IPv4 addresses, ranking physical LAN/Wi-Fi
-/// ahead of virtual adapters (WSL, Hyper-V, VirtualBox, Docker) so QR & discovery
-/// never get stuck pointing to an unreachable virtual interface.
+/// ahead of virtual adapters (WSL, Hyper-V, VirtualBox, Docker).
 Future<List<String>> _detectAllPhysicalIpv4s() async {
   final preferred = <String>[];
   final secondary = <String>[];

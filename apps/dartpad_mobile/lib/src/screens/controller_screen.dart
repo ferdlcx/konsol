@@ -3,10 +3,11 @@ import 'package:dartpad_protocol/dartpad_protocol.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../utils/haptic_helper.dart';
 import '../widgets/dpad_cross_widget.dart';
 import '../widgets/virtual_joystick.dart';
 
-/// Responsive, Anti-Overlap Xbox-Style Controller & Layout/Combo Editor Screen.
+/// Responsive, Minimalist Studio Controller & Layout/Combo Editor Screen.
 class ControllerScreen extends StatefulWidget {
   final MobileControllerEngine engine;
   final VoidCallback onBackToDashboard;
@@ -60,12 +61,12 @@ class ControllerScreen extends StatefulWidget {
               backgroundColor: Color(theme.panelHex),
               title: Row(
                 children: [
-                  Icon(Icons.settings, color: Color(theme.accentHex)),
+                  Icon(Icons.tune, color: Color(theme.accentHex), size: 20),
                   const SizedBox(width: 8),
                   const Expanded(
                     child: Text(
-                      'Settings, Theme & Release Info',
-                      style: TextStyle(color: Colors.white, fontSize: 16),
+                      'Pengaturan, Tema & Rilis',
+                      style: TextStyle(color: Colors.white, fontSize: 15),
                     ),
                   ),
                 ],
@@ -78,11 +79,11 @@ class ControllerScreen extends StatefulWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       const Text(
-                        'Tema Tampilan (Theme):',
+                        'Tema Minimalis:',
                         style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13),
+                            color: Colors.white70,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12),
                       ),
                       const SizedBox(height: 6),
                       Wrap(
@@ -109,8 +110,8 @@ class ControllerScreen extends StatefulWidget {
                       Row(
                         children: [
                           const SizedBox(
-                            width: 145,
-                            child: Text('Ukuran Global Tombol:',
+                            width: 135,
+                            child: Text('Skala Tombol:',
                                 style: TextStyle(
                                     color: Colors.white70, fontSize: 12)),
                           ),
@@ -138,7 +139,7 @@ class ControllerScreen extends StatefulWidget {
                       Row(
                         children: [
                           const SizedBox(
-                            width: 145,
+                            width: 135,
                             child: Text('Deadzone Analog:',
                                 style: TextStyle(
                                     color: Colors.white70, fontSize: 12)),
@@ -163,8 +164,8 @@ class ControllerScreen extends StatefulWidget {
                       Row(
                         children: [
                           const SizedBox(
-                            width: 145,
-                            child: Text('Sensitivity Analog:',
+                            width: 135,
+                            child: Text('Sensitivitas:',
                                 style: TextStyle(
                                     color: Colors.white70, fontSize: 12)),
                           ),
@@ -189,12 +190,8 @@ class ControllerScreen extends StatefulWidget {
                         dense: true,
                         contentPadding: EdgeInsets.zero,
                         title: const Text(
-                          'Auto-Pair & Auto-Reconnect (Wi-Fi & USB Tethering)',
+                          'Auto-Pair Wi-Fi & USB Tethering',
                           style: TextStyle(color: Colors.white, fontSize: 12),
-                        ),
-                        subtitle: const Text(
-                          'Otomatis cari PC & simpan koneksi walaupun HP/PC dimatikan',
-                          style: TextStyle(color: Colors.white54, fontSize: 11),
                         ),
                         value: settings.autoPairEnabled,
                         activeColor: Color(theme.accentHex),
@@ -209,7 +206,7 @@ class ControllerScreen extends StatefulWidget {
                         dense: true,
                         contentPadding: EdgeInsets.zero,
                         title: const Text(
-                          'Tombol Volume HP sebagai Trigger (LT / RT)',
+                          'Volume HP sebagai Trigger (LT / RT)',
                           style: TextStyle(color: Colors.white, fontSize: 12),
                         ),
                         value: volTriggers,
@@ -223,7 +220,7 @@ class ControllerScreen extends StatefulWidget {
                         dense: true,
                         contentPadding: EdgeInsets.zero,
                         title: const Text(
-                          'Getar / Haptic & Force Feedback (Rumble)',
+                          'Getar Haptic & Force Feedback (Rumble)',
                           style: TextStyle(color: Colors.white, fontSize: 12),
                         ),
                         value: settings.hapticFeedback,
@@ -235,34 +232,34 @@ class ControllerScreen extends StatefulWidget {
                           persistAll();
                         },
                       ),
-                      const Divider(color: Colors.white24),
+                      const Divider(color: Color(0xFF252830)),
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: Colors.black26,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.white12),
+                          color: Color(theme.bgHex),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF252830)),
                         ),
                         child: const Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Release Info — DartPad v${DartPadAppSettings.appVersion}',
+                              'DartPad v${DartPadAppSettings.appVersion}',
                               style: TextStyle(
                                 color: Colors.white,
-                                fontWeight: FontWeight.bold,
+                                fontWeight: FontWeight.w700,
                                 fontSize: 12,
                               ),
                             ),
                             SizedBox(height: 4),
                             Text(
-                              '• Layout Bawaan: Xbox Big Controls (LS, XYAB, LT/LB/RB/RT 2x Lebih Besar)\n'
-                              '• Combo Macro: Instan & Urutan Milidetik ((1) X→Y→A→A)\n'
-                              '• Scan QR Kamera Google ML Kit + Subnet Sweep Wi-Fi LAN & USB\n'
-                              '• Release & Update: github.com/ferdlcx/konsol/releases',
+                              '• Dukungan penuh Xbox 360 (XInput) & Sony DualShock 4 via ViGEmBus\n'
+                              '• Tombol L3 & R3 khusus + Ikon geometris PS (△ ○ □ ✕)\n'
+                              '• Haptic Feedback nyata + Combo Instan & Sequence (ms)\n'
+                              '• github.com/ferdlcx/konsol',
                               style: TextStyle(
-                                  color: Colors.white70, fontSize: 11),
+                                  color: Colors.white60, fontSize: 11),
                             ),
                           ],
                         ),
@@ -274,7 +271,7 @@ class ControllerScreen extends StatefulWidget {
               actions: [
                 ElevatedButton(
                   onPressed: () => Navigator.of(ctx).pop(),
-                  child: const Text('Tutup & Simpan'),
+                  child: const Text('Selesai'),
                 ),
               ],
             );
@@ -323,7 +320,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
     final consumed = widget.engine.handleHardwareKeyEvent(hwKey, isPressed);
     if (consumed) {
       if (event is KeyDownEvent && widget.engine.settings.hapticFeedback) {
-        HapticFeedback.lightImpact();
+        DartPadHaptics.buttonTap();
       }
       return KeyEventResult.handled;
     }
@@ -352,8 +349,6 @@ class _ControllerScreenState extends State<ControllerScreen> {
     setState(() {});
   }
 
-  /// Shows the Top-Center Close / Dashboard / Quick Menu dialog so pressing back or
-  /// the center-top close button cleanly returns to Dashboard Mobile without killing APK.
   void _openCloseMenuDialog() {
     final theme = widget.engine.settings.themePreset;
     showDialog<void>(
@@ -362,25 +357,25 @@ class _ControllerScreenState extends State<ControllerScreen> {
         return AlertDialog(
           backgroundColor: Color(theme.panelHex),
           title: const Text(
-            'Menu Konsol DartPad',
-            style: TextStyle(color: Colors.white, fontSize: 16),
+            'Menu Konsol',
+            style: TextStyle(color: Colors.white, fontSize: 15),
           ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                leading:
-                    Icon(Icons.dashboard, color: Color(theme.accentHex)),
-                title: const Text('Kembali ke Dashboard Mobile',
+                leading: const Icon(Icons.dashboard_outlined,
+                    color: Colors.white70),
+                title: const Text('Kembali ke Dashboard',
                     style: TextStyle(
                         color: Colors.white,
                         fontSize: 14,
-                        fontWeight: FontWeight.bold)),
+                        fontWeight: FontWeight.w600)),
                 subtitle: Text(
                   widget.engine.isConnected
                       ? 'Terhubung ke ${widget.engine.connectedServerName}'
-                      : 'Scan QR Kamera, Auto-Pair Wi-Fi / USB, Cek Update',
-                  style: const TextStyle(color: Colors.white60, fontSize: 12),
+                      : 'Scan QR, Auto-Pair, & Update',
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
                 ),
                 onTap: () {
                   Navigator.of(ctx).pop();
@@ -389,24 +384,23 @@ class _ControllerScreenState extends State<ControllerScreen> {
                 },
               ),
               ListTile(
-                leading: Icon(Icons.tune, color: Color(theme.accentHex)),
-                title: const Text(
-                    'Pengaturan (Theme, Besar-Kecil, Release Info)',
+                leading: const Icon(Icons.tune, color: Colors.white70),
+                title: const Text('Pengaturan (Tema, Skala, Rilis)',
                     style: TextStyle(color: Colors.white, fontSize: 14)),
                 onTap: () {
                   Navigator.of(ctx).pop();
                   _openSettingsAndReleaseInfoDialog();
                 },
               ),
-              const Divider(color: Colors.white12),
+              const Divider(color: Color(0xFF252830)),
               ListTile(
                 leading:
                     const Icon(Icons.exit_to_app, color: Colors.redAccent),
-                title: const Text('Keluar Total dari APK',
+                title: const Text('Keluar Aplikasi',
                     style: TextStyle(
                         color: Colors.redAccent,
                         fontSize: 14,
-                        fontWeight: FontWeight.bold)),
+                        fontWeight: FontWeight.w600)),
                 onTap: () {
                   Navigator.of(ctx).pop();
                   widget.engine.releaseAllInputs();
@@ -437,14 +431,12 @@ class _ControllerScreenState extends State<ControllerScreen> {
     );
   }
 
-  /// Opens the Combo Macro Builder supporting BOTH Instant Combos (`LB + RB`)
-  /// and Ordered Millisecond Sequence Macros (`(1)` `X -> Y -> A -> A`).
   void _openAddComboDialog() {
     final sequenceList = <GamepadButton>[
-      GamepadButton.west, // X
-      GamepadButton.north, // Y
-      GamepadButton.south, // A
-      GamepadButton.south, // A
+      GamepadButton.west,
+      GamepadButton.north,
+      GamepadButton.south,
+      GamepadButton.south,
     ];
     var mode = ComboExecutionMode.sequence;
     var stepDelayMs = 75;
@@ -461,7 +453,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
         return StatefulBuilder(
           builder: (ctx, setDialogState) {
             final previewStr = sequenceList.isEmpty
-                ? '(kosong - tap tombol di bawah untuk menambah)'
+                ? '(kosong)'
                 : sequenceList
                     .map((b) => widget.engine.profile.labelFor(b))
                     .join(mode == ComboExecutionMode.sequence ? ' → ' : ' + ');
@@ -469,7 +461,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
             return AlertDialog(
               backgroundColor: Color(theme.panelHex),
               title: const Text(
-                'Buat Tombol Combo / Macro Urutan (ms)',
+                'Buat Tombol Combo',
                 style: TextStyle(color: Colors.white, fontSize: 15),
               ),
               content: SizedBox(
@@ -488,8 +480,8 @@ class _ControllerScreenState extends State<ControllerScreen> {
                               style: const TextStyle(color: Colors.white),
                               decoration: const InputDecoration(
                                 labelText: 'Label (mis. (1))',
-                                labelStyle:
-                                    TextStyle(color: Colors.white70, fontSize: 12),
+                                labelStyle: TextStyle(
+                                    color: Colors.white60, fontSize: 12),
                               ),
                             ),
                           ),
@@ -504,7 +496,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                                 ),
                                 ButtonSegment(
                                   value: ComboExecutionMode.simultaneous,
-                                  label: Text('Instan (Bersamaan)',
+                                  label: Text('Instan',
                                       style: TextStyle(fontSize: 11)),
                                 ),
                               ],
@@ -520,7 +512,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                         const SizedBox(height: 8),
                         Row(
                           children: [
-                            const Text('Jeda per tombol:',
+                            const Text('Jeda (ms):',
                                 style: TextStyle(
                                     color: Colors.white70, fontSize: 12)),
                             Expanded(
@@ -537,9 +529,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                             ),
                             Text('$stepDelayMs ms',
                                 style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12)),
+                                    color: Colors.white, fontSize: 12)),
                           ],
                         ),
                       ],
@@ -548,24 +538,23 @@ class _ControllerScreenState extends State<ControllerScreen> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: Colors.black38,
+                          color: Color(theme.bgHex),
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Color(theme.accentHex)),
+                          border: Border.all(color: const Color(0xFF252830)),
                         ),
                         child: Row(
                           children: [
                             Expanded(
                               child: Text(
-                                'Isi Combo: $previewStr',
+                                previewStr,
                                 style: TextStyle(
                                   color: Color(theme.accentHex),
-                                  fontWeight: FontWeight.bold,
+                                  fontWeight: FontWeight.w600,
                                   fontSize: 13,
                                 ),
                               ),
                             ),
                             IconButton(
-                              tooltip: 'Hapus langkah terakhir',
                               onPressed: sequenceList.isEmpty
                                   ? null
                                   : () => setDialogState(
@@ -574,7 +563,6 @@ class _ControllerScreenState extends State<ControllerScreen> {
                                   size: 18, color: Colors.white70),
                             ),
                             IconButton(
-                              tooltip: 'Reset urutan',
                               onPressed: sequenceList.isEmpty
                                   ? null
                                   : () =>
@@ -586,18 +574,13 @@ class _ControllerScreenState extends State<ControllerScreen> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      const Text(
-                        'Tap tombol untuk menambahkan ke urutan (bisa berulang, mis. X lalu Y lalu A lalu A):',
-                        style: TextStyle(color: Colors.white70, fontSize: 11),
-                      ),
-                      const SizedBox(height: 6),
                       Wrap(
                         spacing: 6,
                         runSpacing: 6,
                         children: [
                           for (final btn in GamepadButton.values)
                             ActionChip(
-                              backgroundColor: const Color(0xFF222C3C),
+                              backgroundColor: const Color(0xFF20242C),
                               label: Text(
                                 '+ ${widget.engine.profile.labelFor(btn)}',
                                 style: const TextStyle(
@@ -634,15 +617,15 @@ class _ControllerScreenState extends State<ControllerScreen> {
                             comboMode: mode,
                             stepDelayMs: stepDelayMs,
                             x: 0.50,
-                            y: 0.65,
+                            y: 0.72,
                             scale: 1.0,
-                            colorHex: 0xFFFF4081,
+                            colorHex: 0xFF242934,
                           );
                           widget.engine.setLayout(updatedLayout);
                           setState(() => _selectedItemId = id);
                           Navigator.of(ctx).pop();
                         },
-                  child: const Text('Simpan Tombol Combo'),
+                  child: const Text('Simpan'),
                 ),
               ],
             );
@@ -691,18 +674,17 @@ class _ControllerScreenState extends State<ControllerScreen> {
                 return Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    // Subtle Xbox ergonomic grip background arcs
                     Positioned.fill(
                       child: IgnorePointer(
                         child: CustomPaint(
                           painter: _ControllerGripBackgroundPainter(
-                            primaryColor: Color(theme.primaryHex),
+                            lineColor: const Color(0xFF1B1E26),
                           ),
                         ),
                       ),
                     ),
 
-                    // 1. All Gamepad Controls (Joysticks, Cross D-Pad, Shoulders, Diamond ABXY, Combos)
+                    // All Gamepad Controls
                     for (final item in layout.items)
                       if (item.visible || _editMode)
                         _buildResponsiveElement(
@@ -715,7 +697,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                           theme: theme,
                         ),
 
-                    // 2. Compact Top-Center Control Bar (with Close/Exit button in the top middle!)
+                    // Minimalist Top-Center HUD Pill
                     Align(
                       alignment: Alignment.topCenter,
                       child: Padding(
@@ -724,7 +706,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                       ),
                     ),
 
-                    // 3. Bottom Layout Editor Inspector Panel
+                    // Bottom Editor Bar
                     if (_editMode && selectedItem != null)
                       Align(
                         alignment: Alignment.bottomCenter,
@@ -749,23 +731,23 @@ class _ControllerScreenState extends State<ControllerScreen> {
   ) {
     final connected = widget.engine.isConnected;
     final rtt = widget.engine.lastRttMs.toStringAsFixed(0);
+    const emerald = Color(0xFF22C55E);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: Color(theme.panelHex).withValues(alpha: 0.94),
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: _editMode
-              ? const Color(0xFFFFAB00)
-              : Color(theme.accentHex).withValues(alpha: 0.45),
-          width: 1.2,
+              ? const Color(0xFFF59E0B)
+              : const Color(0xFF262A34),
+          width: 1.0,
         ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Connection / Dashboard Pill
           InkWell(
             onTap: () {
               widget.engine.releaseAllInputs();
@@ -774,22 +756,21 @@ class _ControllerScreenState extends State<ControllerScreen> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  connected ? Icons.wifi_tethering : Icons.dashboard_rounded,
-                  size: 14,
-                  color: connected
-                      ? const Color(0xFF00E676)
-                      : Colors.amberAccent,
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: connected ? emerald : Colors.white38,
+                  ),
                 ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 6),
                 Text(
-                  connected
-                      ? '${widget.engine.connectedServerName ?? "PC"} (${rtt}ms)'
-                      : 'DASHBOARD',
+                  connected ? '${rtt}ms' : 'MENU',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 11,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
@@ -797,20 +778,16 @@ class _ControllerScreenState extends State<ControllerScreen> {
           ),
           const SizedBox(width: 8),
 
-          // Preset Xbox / PS Toggle
           _hudChip(
             label: profile.type == ControllerType.xbox ? 'XBOX' : 'PS',
-            color: Color(theme.primaryHex),
+            color: const Color(0xFF232732),
             onTap: _togglePreset,
           ),
           const SizedBox(width: 6),
 
-          // Edit Layout / Combo Toggle
           _hudChip(
-            label: _editMode ? 'SELESAI' : 'EDIT / COMBO',
-            color: _editMode
-                ? const Color(0xFFFFAB00)
-                : const Color(0xFF253042),
+            label: _editMode ? 'SELESAI' : 'EDIT',
+            color: _editMode ? const Color(0xFFF59E0B) : const Color(0xFF232732),
             textColor: _editMode ? Colors.black : Colors.white,
             onTap: () => setState(() {
               _editMode = !_editMode;
@@ -822,13 +799,14 @@ class _ControllerScreenState extends State<ControllerScreen> {
             const SizedBox(width: 6),
             _hudChip(
               label: '+ COMBO',
-              color: const Color(0xFFFF4081),
+              color: Color(theme.accentHex),
+              textColor: Colors.black,
               onTap: _openAddComboDialog,
             ),
             const SizedBox(width: 6),
             _hudChip(
               label: 'RESET',
-              color: Colors.white12,
+              color: const Color(0xFF232732),
               onTap: () {
                 widget.engine.setLayout(
                   ControllerLayout.defaultLandscape(preset: profile.type),
@@ -839,40 +817,27 @@ class _ControllerScreenState extends State<ControllerScreen> {
           ],
 
           const SizedBox(width: 6),
-          // Settings & Theme Button
           InkWell(
             onTap: _openSettingsAndReleaseInfoDialog,
             child: const Padding(
               padding: EdgeInsets.symmetric(horizontal: 4),
-              child: Icon(Icons.settings, size: 17, color: Colors.white70),
+              child: Icon(Icons.tune, size: 15, color: Colors.white70),
             ),
           ),
 
           const SizedBox(width: 6),
-          // Prominent Top-Center CLOSE / EXIT Button
           InkWell(
             onTap: _openCloseMenuDialog,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
               decoration: BoxDecoration(
-                color: Colors.redAccent.withValues(alpha: 0.85),
-                borderRadius: BorderRadius.circular(12),
+                color: const Color(0xFF2A1D20),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: Colors.redAccent.withValues(alpha: 0.4),
+                ),
               ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.close, size: 13, color: Colors.white),
-                  SizedBox(width: 3),
-                  Text(
-                    'CLOSE',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ],
-              ),
+              child: const Icon(Icons.close, size: 13, color: Color(0xFFFCA5A5)),
             ),
           ),
         ],
@@ -892,14 +857,14 @@ class _ControllerScreenState extends State<ControllerScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
           color: color,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(8),
         ),
         child: Text(
           label,
           style: TextStyle(
             color: textColor,
             fontSize: 10,
-            fontWeight: FontWeight.bold,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ),
@@ -938,7 +903,6 @@ class _ControllerScreenState extends State<ControllerScreen> {
     final double elemHeight =
         isBumperOrTrigger ? scaledSize * 0.78 : scaledSize;
 
-    // Clamp strictly inside screen boundaries so nothing EVER overflows or collides with edges
     final double left = ((item.x * canvasWidth) - (elemWidth / 2))
         .clamp(4.0, math.max(4.0, canvasWidth - elemWidth - 4.0))
         .toDouble();
@@ -977,16 +941,35 @@ class _ControllerScreenState extends State<ControllerScreen> {
         },
       );
     } else {
-      final displayLabel = item.actions.length == 1 && !item.isCombo
-          ? profile.labelFor(item.actions.first)
+      final singleAction =
+          item.actions.length == 1 && !item.isCombo ? item.actions.first : null;
+      final displayLabel = singleAction != null
+          ? profile.labelFor(singleAction)
           : item.label;
       final subLabel = item.isCombo ? item.describeCombo(profile.type) : null;
+
+      final psShape = profile.type == ControllerType.playstation
+          ? singleAction
+          : null;
 
       child = _GamepadActionButton(
         width: elemWidth,
         height: elemHeight,
         label: displayLabel,
         subLabel: subLabel,
+        psFaceShape: (psShape == GamepadButton.north ||
+                psShape == GamepadButton.east ||
+                psShape == GamepadButton.west ||
+                psShape == GamepadButton.south)
+            ? psShape
+            : null,
+        xboxFaceButton: (profile.type == ControllerType.xbox &&
+                (singleAction == GamepadButton.north ||
+                    singleAction == GamepadButton.east ||
+                    singleAction == GamepadButton.west ||
+                    singleAction == GamepadButton.south))
+            ? singleAction
+            : null,
         isBumper: isBumperOrTrigger,
         isCombo: item.isCombo,
         isSelected: isSelected,
@@ -1035,8 +1018,8 @@ class _ControllerScreenState extends State<ControllerScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
         color: Color(theme.panelHex).withValues(alpha: 0.96),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFFAB00)),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFF59E0B)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1048,7 +1031,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                   'Edit: ${selected.label} ${selected.isCombo ? "[${selected.describeCombo(widget.engine.profile.type)}]" : ""}',
                   style: const TextStyle(
                     color: Colors.white,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w600,
                     fontSize: 12,
                   ),
                 ),
@@ -1070,7 +1053,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
           ),
           Row(
             children: [
-              const Text('Besar/Kecil:',
+              const Text('Ukuran:',
                   style: TextStyle(color: Colors.white70, fontSize: 11)),
               Expanded(
                 child: Slider(
@@ -1121,13 +1104,15 @@ class _ControllerScreenState extends State<ControllerScreen> {
   }
 }
 
-/// Self-contained button widget that manages its own pressed highlight state
-/// locally so touching buttons never triggers full-screen rebuild lag.
+/// Matte tactile button supporting geometric PlayStation symbols (`△ ○ □ ✕`),
+/// minimalist Xbox letter accents, and real vibrator haptic tap feedback.
 class _GamepadActionButton extends StatefulWidget {
   final double width;
   final double height;
   final String label;
   final String? subLabel;
+  final GamepadButton? psFaceShape;
+  final GamepadButton? xboxFaceButton;
   final bool isBumper;
   final bool isCombo;
   final bool isSelected;
@@ -1144,6 +1129,8 @@ class _GamepadActionButton extends StatefulWidget {
     required this.height,
     required this.label,
     this.subLabel,
+    this.psFaceShape,
+    this.xboxFaceButton,
     required this.isBumper,
     required this.isCombo,
     required this.isSelected,
@@ -1170,15 +1157,41 @@ class _GamepadActionButtonState extends State<_GamepadActionButton> {
     }
     if (_isPressed == next) return;
     if (next && widget.hapticEnabled) {
-      HapticFeedback.lightImpact();
+      DartPadHaptics.buttonTap();
     }
     setState(() => _isPressed = next);
     widget.onPressedChanged(next);
   }
 
+  Color _faceAccentColor() {
+    switch (widget.psFaceShape ?? widget.xboxFaceButton) {
+      case GamepadButton.north:
+        return widget.psFaceShape != null
+            ? const Color(0xFF4ADE80) // PS Green Triangle
+            : const Color(0xFFFBBF24); // Xbox Yellow Y
+      case GamepadButton.east:
+        return const Color(0xFFF87171); // PS Coral Circle / Xbox Red B
+      case GamepadButton.west:
+        return widget.psFaceShape != null
+            ? const Color(0xFFF472B6) // PS Pink Square
+            : const Color(0xFF60A5FA); // Xbox Blue X
+      case GamepadButton.south:
+        return widget.psFaceShape != null
+            ? const Color(0xFF60A5FA) // PS Blue Cross
+            : const Color(0xFF4ADE80); // Xbox Green A
+      default:
+        return Colors.white;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isCircular = !widget.isBumper && !widget.isCombo;
+    final hasFaceAccent =
+        widget.psFaceShape != null || widget.xboxFaceButton != null;
+    final glyphColor = _isPressed
+        ? Colors.black
+        : (hasFaceAccent ? _faceAccentColor() : Colors.white);
 
     return Listener(
       onPointerDown: (_) => _setPressed(true),
@@ -1191,71 +1204,140 @@ class _GamepadActionButtonState extends State<_GamepadActionButton> {
         padding: const EdgeInsets.symmetric(horizontal: 4),
         decoration: BoxDecoration(
           shape: isCircular ? BoxShape.circle : BoxShape.rectangle,
-          borderRadius: isCircular ? null : BorderRadius.circular(14),
+          borderRadius: isCircular ? null : BorderRadius.circular(12),
           color: _isPressed
-              ? widget.accentColor
+              ? (hasFaceAccent ? _faceAccentColor() : widget.accentColor)
               : widget.fillColor.withValues(alpha: widget.opacity),
-          boxShadow: _isPressed
-              ? [
-                  BoxShadow(
-                    color: widget.accentColor.withValues(alpha: 0.55),
-                    blurRadius: 12,
-                  ),
-                ]
-              : null,
           border: Border.all(
             color: widget.isSelected
-                ? const Color(0xFFFFAB00)
+                ? const Color(0xFFF59E0B)
                 : (_isPressed
                     ? Colors.white
-                    : Colors.white.withValues(alpha: 0.35)),
-            width: widget.isSelected ? 2.5 : 1.5,
+                    : (hasFaceAccent
+                        ? _faceAccentColor().withValues(alpha: 0.45)
+                        : const Color(0xFF2D323E))),
+            width: widget.isSelected ? 2.0 : 1.2,
           ),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              widget.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: _isPressed ? Colors.black : Colors.white,
-                fontWeight: FontWeight.w900,
-                fontSize: (widget.height * 0.34).clamp(10.0, 20.0).toDouble(),
-              ),
-            ),
-            if (widget.subLabel != null)
-              Text(
-                widget.subLabel!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: _isPressed ? Colors.black87 : Colors.white70,
-                  fontSize: (widget.height * 0.17).clamp(7.5, 10.5).toDouble(),
-                  fontWeight: FontWeight.w600,
+        child: widget.psFaceShape != null
+            ? CustomPaint(
+                size: Size.square(widget.height * 0.44),
+                painter: _PlayStationShapePainter(
+                  button: widget.psFaceShape!,
+                  color: glyphColor,
                 ),
+              )
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    widget.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: glyphColor,
+                      fontWeight: FontWeight.w700,
+                      fontSize:
+                          (widget.height * 0.34).clamp(10.0, 20.0).toDouble(),
+                    ),
+                  ),
+                  if (widget.subLabel != null)
+                    Text(
+                      widget.subLabel!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _isPressed ? Colors.black87 : Colors.white60,
+                        fontSize:
+                            (widget.height * 0.17).clamp(7.5, 10.5).toDouble(),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                ],
               ),
-          ],
-        ),
       ),
     );
   }
 }
 
-class _ControllerGripBackgroundPainter extends CustomPainter {
-  final Color primaryColor;
+/// Vector CustomPainter drawing PlayStation face icons (`△ ○ □ ✕`) cleanly.
+class _PlayStationShapePainter extends CustomPainter {
+  final GamepadButton button;
+  final Color color;
 
-  const _ControllerGripBackgroundPainter({required this.primaryColor});
+  const _PlayStationShapePainter({
+    required this.button,
+    required this.color,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = math.min(size.width, size.height);
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = (s * 0.14).clamp(2.2, 4.2)
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    switch (button) {
+      case GamepadButton.north: // Triangle
+        final r = s * 0.44;
+        final path = Path()
+          ..moveTo(cx, cy - r)
+          ..lineTo(cx + r * 0.92, cy + r * 0.72)
+          ..lineTo(cx - r * 0.92, cy + r * 0.72)
+          ..close();
+        canvas.drawPath(path, paint);
+        break;
+      case GamepadButton.east: // Circle
+        canvas.drawCircle(Offset(cx, cy), s * 0.39, paint);
+        break;
+      case GamepadButton.west: // Square
+        final half = s * 0.36;
+        canvas.drawRect(
+          Rect.fromLTRB(cx - half, cy - half, cx + half, cy + half),
+          paint,
+        );
+        break;
+      case GamepadButton.south: // Cross
+        final half = s * 0.35;
+        canvas.drawLine(
+          Offset(cx - half, cy - half),
+          Offset(cx + half, cy + half),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(cx + half, cy - half),
+          Offset(cx - half, cy + half),
+          paint,
+        );
+        break;
+      default:
+        break;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PlayStationShapePainter oldDelegate) {
+    return oldDelegate.button != button || oldDelegate.color != color;
+  }
+}
+
+class _ControllerGripBackgroundPainter extends CustomPainter {
+  final Color lineColor;
+
+  const _ControllerGripBackgroundPainter({required this.lineColor});
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = primaryColor.withValues(alpha: 0.06)
+      ..color = lineColor
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0;
+      ..strokeWidth = 1.2;
 
-    // Subtle Xbox controller contour lines on left and right sides
     canvas.drawCircle(
       Offset(size.width * 0.18, size.height * 0.55),
       size.height * 0.42,
@@ -1270,6 +1352,6 @@ class _ControllerGripBackgroundPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ControllerGripBackgroundPainter oldDelegate) {
-    return oldDelegate.primaryColor != primaryColor;
+    return oldDelegate.lineColor != lineColor;
   }
 }

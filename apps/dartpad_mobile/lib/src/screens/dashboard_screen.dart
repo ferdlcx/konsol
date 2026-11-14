@@ -5,19 +5,17 @@ import 'dart:io';
 import 'package:dartpad_protocol/dartpad_protocol.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:ota_update/ota_update.dart';
 
 import 'qr_scanner_screen.dart';
 
-/// Main Mobile Dashboard Screen for `dartpad_mobile`.
+/// Minimalist Mobile Studio Dashboard Screen for `dartpad_mobile`.
 ///
-/// Opens first when the app launches (instead of jumping straight into raw controls).
 /// Provides:
-/// - **Camera QR Code Scanner** (Google ML Kit / `mobile_scanner`) as the #1 pairing method
-/// - **Automatic PC Discovery (Wi-Fi LAN & USB Tethering)** + **PIN Matching**
-/// - **Own Device IP Detection** (shows HP Wi-Fi & USB Tethering IPs automatically)
-/// - **Manual QR URI / IP+PIN Fallback** with immediate inline & SnackBar diagnostics
-/// - **One-Tap Launch Gamepad Console** (works both connected & offline)
-/// - **Quick Settings (Theme, Besar-Kecil, Preset Xbox/PS, Update Check & Release Info)**
+/// - **QR Camera Scanner** (lifecycle-safe Google ML Kit / `mobile_scanner`)
+/// - **Auto-Discovery & PIN Matcher** (Wi-Fi LAN & USB Tethering)
+/// - **Live Gamepad Console** (Minimalist Xbox & PlayStation layouts with L3/R3)
+/// - **In-App OTA Updater** (`ota_update` downloads latest APK and installs in-place)
 class DashboardScreen extends StatefulWidget {
   final MobileControllerEngine engine;
   final VoidCallback onOpenController;
@@ -51,13 +49,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _showManualFallback = false;
   String? _statusMessage;
   bool _statusIsError = false;
+
   String? _latestVersionTag;
   String? _latestReleaseUrl;
+  String? _latestApkUrl;
+  bool _hasUpdateAvailable = false;
+  bool _isUpdatingApk = false;
+  int _otaProgress = 0;
+  StreamSubscription<OtaEvent>? _otaSub;
 
   @override
   void initState() {
     super.initState();
-    // Restore comfortable portrait/auto orientation on the Mobile Dashboard
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
@@ -77,6 +80,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   void dispose() {
+    _otaSub?.cancel();
     _qrUriController.dispose();
     _ipController.dispose();
     _portController.dispose();
@@ -95,9 +99,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor:
-              isError ? const Color(0xFFB71C1C) : const Color(0xFF1B5E20),
+              isError ? const Color(0xFF7F1D1D) : const Color(0xFF1F242D),
           content: Text(msg, style: const TextStyle(color: Colors.white)),
-          duration: const Duration(seconds: 4),
+          duration: const Duration(seconds: 3),
         ),
       );
     }
@@ -141,7 +145,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (!mounted) return;
     if (ok == true) {
       _setFeedback(
-        'Terhubung ke ${widget.engine.connectedServerName} (${widget.engine.connectedServerIp}) via Scan QR!',
+        'Terhubung ke ${widget.engine.connectedServerName} (${widget.engine.connectedServerIp}) via Scan QR.',
       );
       setState(() {});
     }
@@ -170,7 +174,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _ipController.text = rx.ip;
       _pinController.text = overridePin;
       _setFeedback(
-        'Berhasil terhubung ke ${widget.engine.connectedServerName} (${rx.ip})! Tersimpan permanen.',
+        'Terhubung ke ${widget.engine.connectedServerName} (${rx.ip}).',
       );
     } else {
       _setFeedback(
@@ -186,21 +190,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final enteredPin = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Cocokkan PIN untuk ${rx.serverName}'),
+        backgroundColor: Color(widget.engine.settings.themePreset.panelHex),
+        title: Text('PIN ${rx.serverName}',
+            style: const TextStyle(color: Colors.white, fontSize: 16)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('IP PC terdeteksi otomatis: ${rx.ip}:${rx.udpPort}',
-                style: const TextStyle(fontSize: 12, color: Colors.white70)),
+            Text('IP PC: ${rx.ip}:${rx.udpPort}',
+                style: const TextStyle(fontSize: 12, color: Colors.white60)),
             const SizedBox(height: 10),
             TextField(
               controller: ctrl,
               keyboardType: TextInputType.number,
               maxLength: 6,
               autofocus: true,
+              style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(
-                labelText: 'Masukkan PIN 6-Digit dari layar PC',
+                labelText: 'Masukkan PIN 6-Digit',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -231,7 +238,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     setState(() => _isConnecting = true);
-    _setFeedback('Membaca QR URI & menghubungi PC...', showSnack: false);
+    _setFeedback('Membaca QR URI...', showSnack: false);
 
     try {
       final ok = await widget.engine.connectFromQrUri(
@@ -242,12 +249,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() => _isConnecting = false);
       if (ok) {
         _setFeedback(
-          'Terhubung ke ${widget.engine.connectedServerName} (${widget.engine.connectedServerIp})!',
+          'Terhubung ke ${widget.engine.connectedServerName} (${widget.engine.connectedServerIp}).',
         );
       } else {
         _setFeedback(
           widget.engine.lastConnectionError ??
-              'Gagal terhubung via QR URI. Cek apakah DartPad.exe berjalan & HP/PC satu jaringan.',
+              'Gagal terhubung via QR URI. Cek DartPad.exe & jaringan Wi-Fi/USB.',
           isError: true,
         );
       }
@@ -269,7 +276,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         DartPadProtocolConstants.defaultPort;
 
     if (ip.isEmpty || pin.isEmpty) {
-      _setFeedback('Isi IP PC dan PIN 6-Digit terlebih dahulu.', isError: true);
+      _setFeedback('Isi IP PC dan PIN 6-Digit.', isError: true);
       return;
     }
 
@@ -290,12 +297,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() => _isConnecting = false);
       if (ok) {
         _setFeedback(
-          'Terhubung ke ${widget.engine.connectedServerName} ($ip)! Tersimpan otomatis.',
+          'Terhubung ke ${widget.engine.connectedServerName} ($ip).',
         );
       } else {
         _setFeedback(
-          widget.engine.lastConnectionError ??
-              'Tidak ada respon dari $ip:$port.',
+          widget.engine.lastConnectionError ?? 'Tidak ada respon dari $ip:$port.',
           isError: true,
         );
       }
@@ -325,22 +331,106 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
       final body = await resp.transform(utf8.decoder).join();
       final json = jsonDecode(body) as Map<String, dynamic>;
-      final tag = json['tag_name']?.toString() ?? 'v0.2.0';
+      final tag = json['tag_name']?.toString() ?? 'v${DartPadAppSettings.appVersion}';
       final htmlUrl =
           json['html_url']?.toString() ?? DartPadAppSettings.releaseUrl;
+
+      String? apkUrl;
+      final assets = (json['assets'] as List<dynamic>?) ?? const [];
+      for (final asset in assets) {
+        if (asset is Map<String, dynamic> &&
+            (asset['name']?.toString().endsWith('.apk') ?? false)) {
+          apkUrl = asset['browser_download_url']?.toString();
+          break;
+        }
+      }
+
+      final normalizedTag = tag.startsWith('v') ? tag.substring(1) : tag;
+      final updateFound = normalizedTag != DartPadAppSettings.appVersion &&
+          apkUrl != null;
+
       if (!mounted) return;
       setState(() {
         _latestVersionTag = tag;
         _latestReleaseUrl = htmlUrl;
+        _latestApkUrl = apkUrl;
+        _hasUpdateAvailable = updateFound;
       });
-      await Clipboard.setData(ClipboardData(text: htmlUrl));
-      _setFeedback(
-        'Versi terbaru di GitHub: $tag (Terpasang: v${DartPadAppSettings.appVersion}). Link rilis sudah disalin ke clipboard!',
-      );
+
+      if (updateFound) {
+        _setFeedback(
+          'Update tersedia: $tag. Tekan "Install Update In-App" untuk memperbarui langsung.',
+        );
+      } else {
+        _setFeedback(
+          'Aplikasi sudah versi terbaru (v${DartPadAppSettings.appVersion}).',
+        );
+      }
     } catch (e) {
-      _setFeedback('Tidak dapat terhubung ke GitHub: $e', isError: true);
+      _setFeedback('Gagal mengecek update: $e', isError: true);
     } finally {
       client.close(force: true);
+    }
+  }
+
+  Future<void> _startInAppOtaUpdate() async {
+    final apkUrl = _latestApkUrl;
+    if (apkUrl == null || _isUpdatingApk) return;
+
+    setState(() {
+      _isUpdatingApk = true;
+      _otaProgress = 0;
+    });
+    _setFeedback('Mengunduh APK $_latestVersionTag...', showSnack: false);
+
+    try {
+      await _otaSub?.cancel();
+      _otaSub = OtaUpdate()
+          .execute(
+            apkUrl,
+            destinationFilename: 'dartpad-mobile-update.apk',
+          )
+          .listen(
+            (event) {
+              if (!mounted) return;
+              switch (event.status) {
+                case OtaStatus.DOWNLOADING:
+                  setState(() {
+                    _otaProgress = int.tryParse(event.value ?? '0') ?? 0;
+                  });
+                  break;
+                case OtaStatus.INSTALLING:
+                  setState(() {
+                    _otaProgress = 100;
+                    _isUpdatingApk = false;
+                  });
+                  _setFeedback('Membuka installer Android untuk menimpa versi lama...');
+                  break;
+                case OtaStatus.DOWNLOAD_ERROR:
+                case OtaStatus.INTERNAL_ERROR:
+                case OtaStatus.PERMISSION_NOT_GRANTED_ERROR:
+                case OtaStatus.CHECKSUM_ERROR:
+                case OtaStatus.INSTALLATION_ERROR:
+                  setState(() => _isUpdatingApk = false);
+                  _setFeedback(
+                    'Update terhenti (${event.status.name}): ${event.value ?? "Izinkan Install unknown apps di Pengaturan"}.',
+                    isError: true,
+                  );
+                  break;
+                default:
+                  break;
+              }
+            },
+            onError: (e) {
+              if (!mounted) return;
+              setState(() => _isUpdatingApk = false);
+              _setFeedback('Error OTA Update: $e', isError: true);
+            },
+          );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isUpdatingApk = false);
+      _setFeedback('Gagal memulai OTA Update: $e', isError: true);
     }
   }
 
@@ -350,46 +440,55 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final theme = settings.themePreset;
     final connected = widget.engine.isConnected;
     final profile = widget.engine.profile;
+    const hairline = Color(0xFF252830);
+    const emerald = Color(0xFF22C55E);
 
     return Scaffold(
       backgroundColor: Color(theme.bgHex),
       appBar: AppBar(
         backgroundColor: Color(theme.panelHex),
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(height: 1, color: hairline),
+        ),
         title: Row(
           children: [
-            Icon(Icons.sports_esports, color: Color(theme.accentHex)),
-            const SizedBox(width: 8),
             const Text(
-              'DartPad Dashboard',
+              'DartPad',
               style: TextStyle(
                 color: Colors.white,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w700,
                 fontSize: 17,
+                letterSpacing: -0.3,
               ),
             ),
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
               decoration: BoxDecoration(
-                color: Color(theme.primaryHex).withValues(alpha: 0.35),
-                borderRadius: BorderRadius.circular(8),
+                color: Color(theme.bgHex),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: hairline),
               ),
               child: const Text(
                 'v${DartPadAppSettings.appVersion}',
-                style: TextStyle(color: Colors.white70, fontSize: 10),
+                style: TextStyle(color: Colors.white60, fontSize: 10),
               ),
             ),
           ],
         ),
         actions: [
           IconButton(
-            tooltip: 'Settings, Theme & Besar-Kecil',
-            icon: const Icon(Icons.settings, color: Colors.white),
+            tooltip: 'Pengaturan',
+            icon: const Icon(Icons.tune, color: Colors.white70, size: 20),
             onPressed: widget.onOpenSettings,
           ),
           IconButton(
             tooltip: 'Keluar APK',
-            icon: const Icon(Icons.power_settings_new, color: Colors.redAccent),
+            icon: const Icon(Icons.power_settings_new,
+                color: Colors.white54, size: 20),
             onPressed: () {
               widget.engine.releaseAllInputs();
               SystemNavigator.pop();
@@ -402,17 +501,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
         child: ListView(
           padding: const EdgeInsets.all(14),
           children: [
-            // 1. Hero Connection Status & Automatic Own-IP Card
+            // 1. Connection Status Card (Minimalist Studio Hairline)
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Color(theme.panelHex),
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(12),
                 border: Border.all(
                   color: connected
-                      ? const Color(0xFF00E676)
-                      : Color(theme.accentHex).withValues(alpha: 0.5),
-                  width: 1.5,
+                      ? emerald.withValues(alpha: 0.45)
+                      : hairline,
                 ),
               ),
               child: Column(
@@ -420,12 +518,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 children: [
                   Row(
                     children: [
-                      Icon(
-                        connected ? Icons.check_circle : Icons.wifi_find,
-                        color: connected
-                            ? const Color(0xFF00E676)
-                            : Color(theme.accentHex),
-                        size: 26,
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: connected ? emerald : Colors.white24,
+                        ),
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -434,20 +533,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           children: [
                             Text(
                               connected
-                                  ? 'TERHUBUNG KE ${widget.engine.connectedServerName ?? "PC"}'
-                                  : 'BELUM TERHUBUNG KE PC',
+                                  ? '${widget.engine.connectedServerName ?? "Windows PC"}'
+                                  : 'Siap Disambungkan',
                               style: const TextStyle(
                                 color: Colors.white,
-                                fontWeight: FontWeight.w900,
+                                fontWeight: FontWeight.w700,
                                 fontSize: 15,
                               ),
                             ),
                             Text(
                               connected
-                                  ? 'IP PC: ${widget.engine.connectedServerIp} • Latency ${widget.engine.lastRttMs.toStringAsFixed(0)} ms'
-                                  : 'Gunakan Scan QR Kamera (Tercepat) atau Scan Otomatis Wi-Fi & USB.',
+                                  ? 'Terhubung • ${widget.engine.connectedServerIp} • ${widget.engine.lastRttMs.toStringAsFixed(0)} ms'
+                                  : 'Scan QR di jendela DartPad PC atau sambung otomatis Wi-Fi/USB.',
                               style: const TextStyle(
-                                color: Colors.white70,
+                                color: Colors.white60,
                                 fontSize: 12,
                               ),
                             ),
@@ -461,7 +560,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             _setFeedback('Koneksi diputuskan.');
                           },
                           child: const Text('Putus',
-                              style: TextStyle(color: Colors.redAccent)),
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 12)),
                         ),
                     ],
                   ),
@@ -476,14 +576,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                              color: Colors.black26,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.white12),
+                              color: Color(theme.bgHex),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: hairline),
                             ),
                             child: Text(
-                              'HP ${iface.kind}: ${iface.ip}',
+                              '${iface.kind}: ${iface.ip}',
                               style: const TextStyle(
-                                  color: Colors.white70, fontSize: 11),
+                                  color: Colors.white60, fontSize: 11),
                             ),
                           ),
                       ],
@@ -493,26 +593,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     const SizedBox(height: 10),
                     Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.all(10),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 8),
                       decoration: BoxDecoration(
                         color: _statusIsError
-                            ? Colors.red.withValues(alpha: 0.16)
-                            : Colors.green.withValues(alpha: 0.16),
-                        borderRadius: BorderRadius.circular(10),
+                            ? const Color(0xFF2B1717)
+                            : Color(theme.bgHex),
+                        borderRadius: BorderRadius.circular(8),
                         border: Border.all(
                           color: _statusIsError
-                              ? Colors.redAccent
-                              : const Color(0xFF00E676),
+                              ? const Color(0xFF7F1D1D)
+                              : hairline,
                         ),
                       ),
                       child: Text(
                         _statusMessage!,
                         style: TextStyle(
                           color: _statusIsError
-                              ? Colors.amberAccent
-                              : const Color(0xFF69F0AE),
+                              ? const Color(0xFFFCA5A5)
+                              : Colors.white70,
                           fontSize: 12,
-                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
@@ -522,27 +622,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 12),
 
-            // 2. Primary Action Buttons: SCAN QR CAMERA & OPEN GAMEPAD CONSOLE
+            // 2. Primary Action Buttons
             Row(
               children: [
                 Expanded(
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Color(theme.accentHex),
-                      foregroundColor: Colors.black,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: Color(theme.panelHex),
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: hairline),
+                      padding: const EdgeInsets.symmetric(vertical: 15),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(10),
                       ),
                     ),
                     onPressed: _isConnecting ? null : _openQrCameraScanner,
-                    icon: const Icon(Icons.qr_code_scanner, size: 24),
+                    icon: const Icon(Icons.qr_code_scanner, size: 20),
                     label: const Text(
-                      'SCAN QR KAMERA',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 13,
-                      ),
+                      'Scan QR',
+                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                     ),
                   ),
                 ),
@@ -550,21 +648,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Expanded(
                   child: ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Color(theme.primaryHex),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor: Color(theme.accentHex),
+                      foregroundColor: Colors.black,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(10),
                       ),
                     ),
                     onPressed: widget.onOpenController,
-                    icon: const Icon(Icons.gamepad, size: 24),
+                    icon: const Icon(Icons.sports_esports, size: 20),
                     label: const Text(
-                      'BUKA KONSOL',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 13,
-                      ),
+                      'Buka Konsol',
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
                     ),
                   ),
                 ),
@@ -572,28 +668,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 12),
 
-            // 3. Auto-Discovered PCs (Wi-Fi LAN + USB Tethering) & PIN Matcher
+            // 3. Discovered PCs
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 color: Color(theme.panelHex),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: hairline),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.radar, color: Color(theme.accentHex), size: 20),
-                      const SizedBox(width: 8),
                       const Expanded(
                         child: Text(
-                          'Deteksi PC Otomatis (Wi-Fi LAN & USB)',
+                          'Deteksi PC (Wi-Fi & USB)',
                           style: TextStyle(
                             color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
                           ),
                         ),
                       ),
@@ -601,20 +695,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         onPressed: _isScanning ? null : _refreshNetworkAndScan,
                         icon: _isScanning
                             ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                width: 13,
+                                height: 13,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
-                            : const Icon(Icons.refresh, size: 18),
-                        label: Text(_isScanning ? 'Scanning...' : 'Scan Ulang'),
+                            : const Icon(Icons.refresh,
+                                size: 16, color: Colors.white70),
+                        label: Text(
+                          _isScanning ? 'Mencari...' : 'Scan Ulang',
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 12),
+                        ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 6),
                   if (_discovered.isEmpty)
                     const Text(
-                      'Belum ada PC terdeteksi di jaringan. Pastikan DartPad.exe terbuka di Windows, satu Wi-Fi/Router dengan PC (atau USB Tethering aktif), lalu tekan Scan Ulang atau Scan QR Kamera.',
-                      style: TextStyle(color: Colors.white60, fontSize: 12),
+                      'Belum ada PC terdeteksi. Pastikan DartPad.exe aktif di Windows pada Wi-Fi atau USB Tether yang sama.',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
                     )
                   else
                     for (final rx in _discovered)
@@ -622,11 +721,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         margin: const EdgeInsets.only(top: 8),
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: Colors.black26,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: Color(theme.accentHex).withValues(alpha: 0.4),
-                          ),
+                          color: Color(theme.bgHex),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: hairline),
                         ),
                         child: Row(
                           children: [
@@ -638,14 +735,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                     rx.serverName,
                                     style: const TextStyle(
                                       color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
                                     ),
                                   ),
                                   Text(
                                     '${rx.ip}:${rx.udpPort} • ${rx.transportHint}',
                                     style: const TextStyle(
-                                      color: Colors.white70,
+                                      color: Colors.white54,
                                       fontSize: 11,
                                     ),
                                   ),
@@ -653,11 +750,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ),
                             ),
                             OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: hairline),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10),
+                              ),
                               onPressed: _isConnecting
                                   ? null
                                   : () => _promptPinMatch(rx),
                               child: const Text('PIN',
-                                  style: TextStyle(fontSize: 11)),
+                                  style: TextStyle(
+                                      color: Colors.white70, fontSize: 11)),
                             ),
                             const SizedBox(width: 6),
                             if (rx.pin != null && rx.pin!.isNotEmpty)
@@ -665,6 +768,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Color(theme.accentHex),
                                   foregroundColor: Colors.black,
+                                  elevation: 0,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12),
                                 ),
                                 onPressed: _isConnecting
                                     ? null
@@ -674,7 +780,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                         ),
                                 child: const Text('Pair',
                                     style: TextStyle(
-                                        fontWeight: FontWeight.bold,
+                                        fontWeight: FontWeight.w700,
                                         fontSize: 12)),
                               ),
                           ],
@@ -685,40 +791,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 12),
 
-            // 4. Quick Controls: Preset, Global Size, Theme & Update Check
+            // 4. Quick Config & In-App OTA Update
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 color: Color(theme.panelHex),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: hairline),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Konfigurasi Cepat & Pembaruan',
+                    'Konfigurasi & Update Aplikasi',
                     style: TextStyle(
                       color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   Row(
                     children: [
-                      const Text('Mode Kontroler:',
-                          style: TextStyle(color: Colors.white70, fontSize: 12)),
+                      const Text('Tampilan Kontroler:',
+                          style:
+                              TextStyle(color: Colors.white60, fontSize: 12)),
                       const Spacer(),
                       SegmentedButton<ControllerType>(
                         segments: const [
                           ButtonSegment(
                             value: ControllerType.xbox,
-                            label: Text('Xbox Big', style: TextStyle(fontSize: 11)),
+                            label: Text('Xbox', style: TextStyle(fontSize: 11)),
                           ),
                           ButtonSegment(
                             value: ControllerType.playstation,
-                            label: Text('PlayStation', style: TextStyle(fontSize: 11)),
+                            label: Text('PS (△○□✕)',
+                                style: TextStyle(fontSize: 11)),
                           ),
                         ],
                         selected: {profile.type},
@@ -750,11 +858,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   Row(
                     children: [
-                      const Text('Ukuran Tombol:',
-                          style: TextStyle(color: Colors.white70, fontSize: 12)),
+                      const Text('Skala Tombol:',
+                          style:
+                              TextStyle(color: Colors.white60, fontSize: 12)),
                       Expanded(
                         child: Slider(
                           value: settings.globalScale.clamp(0.6, 1.5).toDouble(),
@@ -775,23 +884,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               color: Colors.white, fontSize: 12)),
                     ],
                   ),
+                  if (_isUpdatingApk) ...[
+                    const SizedBox(height: 6),
+                    LinearProgressIndicator(
+                      value: _otaProgress > 0 ? _otaProgress / 100.0 : null,
+                      backgroundColor: Color(theme.bgHex),
+                      color: Color(theme.accentHex),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Mengunduh pembaruan: $_otaProgress%',
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 11),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
                   Row(
                     children: [
                       Expanded(
                         child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: hairline),
+                          ),
                           onPressed: widget.onOpenSettings,
-                          icon: const Icon(Icons.palette, size: 16),
-                          label: const Text('Theme & Info Rilis'),
+                          icon: const Icon(Icons.tune, size: 15),
+                          label: const Text('Tema & Info',
+                              style: TextStyle(fontSize: 12)),
                         ),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: _checkLatestRelease,
-                          icon: const Icon(Icons.system_update, size: 16),
-                          label: Text(_latestVersionTag != null
-                              ? 'Terbaru: $_latestVersionTag'
-                              : 'Cek Update'),
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(
+                              color: _hasUpdateAvailable
+                                  ? emerald.withValues(alpha: 0.6)
+                                  : hairline,
+                            ),
+                          ),
+                          onPressed: _isUpdatingApk
+                              ? null
+                              : (_hasUpdateAvailable
+                                  ? _startInAppOtaUpdate
+                                  : _checkLatestRelease),
+                          icon: const Icon(Icons.system_update_alt, size: 15),
+                          label: Text(
+                            _hasUpdateAvailable
+                                ? 'Install $_latestVersionTag'
+                                : (_latestVersionTag != null
+                                    ? 'Rilis $_latestVersionTag'
+                                    : 'Cek Update'),
+                            style: const TextStyle(fontSize: 12),
+                          ),
                         ),
                       ),
                     ],
@@ -800,11 +944,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Padding(
                       padding: const EdgeInsets.only(top: 6),
                       child: SelectableText(
-                        'Link Update: $_latestReleaseUrl',
-                        style: TextStyle(
-                          color: Color(theme.accentHex),
-                          fontSize: 11,
-                        ),
+                        '$_latestReleaseUrl',
+                        style: const TextStyle(
+                            color: Colors.white54, fontSize: 10),
                       ),
                     ),
                 ],
@@ -812,23 +954,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 12),
 
-            // 5. Expandable Manual Paste QR URI & Manual IP+PIN Fallback
+            // 5. Manual Connection Fallback
             Container(
               decoration: BoxDecoration(
                 color: Color(theme.panelHex),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: hairline),
               ),
               child: ExpansionTile(
                 initiallyExpanded: _showManualFallback,
                 onExpansionChanged: (v) =>
                     setState(() => _showManualFallback = v),
                 title: const Text(
-                  'Koneksi Manual (Paste QR URI / Ketik IP & PIN)',
+                  'Koneksi Manual (Paste URI / IP & PIN)',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: Colors.white70,
                     fontSize: 13,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
                 childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
@@ -836,38 +978,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   TextField(
                     controller: _qrUriController,
                     style: const TextStyle(color: Colors.white, fontSize: 12),
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: 'Tempel QR URI (dartpad://connect?...)',
-                      labelStyle: TextStyle(color: Colors.white70, fontSize: 12),
+                      labelStyle:
+                          const TextStyle(color: Colors.white54, fontSize: 12),
                       filled: true,
-                      fillColor: Color(0xFF0B0E14),
+                      fillColor: Color(theme.bgHex),
+                      border: const OutlineInputBorder(),
                     ),
                   ),
                   const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
-                    child: ElevatedButton.icon(
+                    child: OutlinedButton.icon(
                       onPressed: _isConnecting ? null : _connectWithQrUri,
                       icon: _isConnecting
                           ? const SizedBox(
                               width: 14,
                               height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Icon(Icons.link),
+                          : const Icon(Icons.link, size: 16),
                       label: Text(_isConnecting
                           ? 'Menyambungkan...'
-                          : 'Hubungkan via Paste QR URI'),
+                          : 'Hubungkan via QR URI'),
                     ),
                   ),
-                  const Divider(color: Colors.white12, height: 22),
+                  const Divider(color: hairline, height: 22),
                   Row(
                     children: [
                       Expanded(
                         flex: 2,
                         child: TextField(
                           controller: _ipController,
-                          style: const TextStyle(color: Colors.white, fontSize: 12),
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 12),
                           decoration: const InputDecoration(
                             labelText: 'IP PC',
                             isDense: true,
@@ -879,7 +1025,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         child: TextField(
                           controller: _portController,
                           keyboardType: TextInputType.number,
-                          style: const TextStyle(color: Colors.white, fontSize: 12),
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 12),
                           decoration: const InputDecoration(
                             labelText: 'Port',
                             isDense: true,
@@ -891,7 +1038,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         child: TextField(
                           controller: _pinController,
                           keyboardType: TextInputType.number,
-                          style: const TextStyle(color: Colors.white, fontSize: 12),
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 12),
                           decoration: const InputDecoration(
                             labelText: 'PIN',
                             isDense: true,

@@ -1,7 +1,8 @@
 import 'dart:math' as math;
 import 'package:dartpad_protocol/dartpad_protocol.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+
+import '../utils/haptic_helper.dart';
 
 /// Authentic Xbox-style 8-way Cross D-Pad widget rendered with [CustomPainter].
 class DpadCrossWidget extends StatefulWidget {
@@ -14,7 +15,7 @@ class DpadCrossWidget extends StatefulWidget {
   const DpadCrossWidget({
     super.key,
     required this.size,
-    this.accentColor = const Color(0xFF00E676),
+    this.accentColor = const Color(0xFFE5E7EB),
     this.editMode = false,
     this.hapticEnabled = true,
     required this.onDirectionsChanged,
@@ -55,7 +56,7 @@ class _DpadCrossWidgetState extends State<DpadCrossWidget> {
   void _setDirections(Set<GamepadButton> next) {
     if (_pressed.length == next.length && _pressed.containsAll(next)) return;
     if (next.isNotEmpty && widget.hapticEnabled) {
-      HapticFeedback.selectionClick();
+      DartPadHaptics.buttonTap(durationMs: 12, amplitude: 85);
     }
     setState(() => _pressed = next);
     widget.onDirectionsChanged(next);
@@ -98,21 +99,21 @@ class _DpadCrossPainter extends CustomPainter {
     final arm = w * 0.34;
     final offset = (w - arm) / 2.0;
 
-    // Outer subtle dish circle (Xbox Series style)
+    // Minimalist matte outer dish circle
     final dishPaint = Paint()
-      ..color = const Color(0xCC12171F)
+      ..color = const Color(0xFF14161B)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(Offset(w / 2, h / 2), w / 2, dishPaint);
 
     final dishBorder = Paint()
-      ..color = Colors.white12
-      ..strokeWidth = 1.5
+      ..color = const Color(0xFF282C36)
+      ..strokeWidth = 1.2
       ..style = PaintingStyle.stroke;
     canvas.drawCircle(Offset(w / 2, h / 2), (w / 2) - 1, dishBorder);
 
     // Cross arms
     final basePaint = Paint()
-      ..color = const Color(0xFF1F2735)
+      ..color = const Color(0xFF20242C)
       ..style = PaintingStyle.fill;
 
     final vRect = RRect.fromRectAndRadius(

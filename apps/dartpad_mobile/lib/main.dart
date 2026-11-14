@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'src/screens/controller_screen.dart';
 import 'src/screens/dashboard_screen.dart';
+import 'src/utils/haptic_helper.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -48,14 +49,7 @@ class _DartPadMobileAppState extends State<DartPadMobileApp> {
 
   void _handleGameRumble(RumbleEvent rumble) {
     if (!_engine.settings.hapticFeedback || rumble.isSilent) return;
-    final peak = rumble.peakIntensity;
-    if (peak >= 0.70) {
-      HapticFeedback.heavyImpact();
-    } else if (peak >= 0.35) {
-      HapticFeedback.mediumImpact();
-    } else {
-      HapticFeedback.lightImpact();
-    }
+    DartPadHaptics.gameRumble(rumble);
   }
 
   @override

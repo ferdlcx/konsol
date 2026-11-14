@@ -113,29 +113,29 @@ class _JoystickPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final outerRadius = size.width / 2;
 
-    // 1. Outer base circle (dark gaming utility style)
+    // 1. Outer matte base circle
     final basePaint = Paint()
-      ..color = const Color(0xCC141923)
+      ..color = const Color(0xFF14161B)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(center, outerRadius, basePaint);
 
-    // 2. Outer glowing border
+    // 2. Crisp hairline border
     final borderPaint = Paint()
-      ..color = isDragging ? accentColor : accentColor.withValues(alpha: 0.35)
-      ..strokeWidth = isDragging ? 2.5 : 1.5
+      ..color = isDragging ? accentColor : const Color(0xFF282C36)
+      ..strokeWidth = isDragging ? 1.8 : 1.2
       ..style = PaintingStyle.stroke;
-    canvas.drawCircle(center, outerRadius - 1.5, borderPaint);
+    canvas.drawCircle(center, outerRadius - 1.2, borderPaint);
 
     // 3. Deadzone ring indicator
     final deadzonePaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.12)
+      ..color = Colors.white.withValues(alpha: 0.08)
       ..strokeWidth = 1.0
       ..style = PaintingStyle.stroke;
     canvas.drawCircle(center, outerRadius * deadzone.clamp(0.02, 0.5), deadzonePaint);
 
     // 4. Crosshair lines
     final crossPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.08)
+      ..color = Colors.white.withValues(alpha: 0.05)
       ..strokeWidth = 1.0;
     canvas.drawLine(
       Offset(center.dx - outerRadius * 0.7, center.dy),
@@ -158,13 +158,13 @@ class _JoystickPainter extends CustomPainter {
     final knobPaint = Paint()
       ..color = isDragging
           ? accentColor.withValues(alpha: 0.90)
-          : const Color(0xFF252D3D)
+          : const Color(0xFF232731)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(knobCenter, outerRadius * 0.34, knobPaint);
 
     final knobRingPaint = Paint()
-      ..color = accentColor
-      ..strokeWidth = 2.0
+      ..color = isDragging ? Colors.white : accentColor.withValues(alpha: 0.55)
+      ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke;
     canvas.drawCircle(knobCenter, outerRadius * 0.34, knobRingPaint);
   }

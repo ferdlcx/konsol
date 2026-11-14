@@ -4,39 +4,39 @@ import 'dart:io';
 import 'controller_layout.dart';
 import 'controller_profile.dart';
 
-/// Available visual color themes for the DartPad Android Controller UI.
+/// Available minimalist matte color themes for the DartPad Android Controller UI.
 enum DartPadThemePreset {
-  xboxGreen(
-    id: 'xbox_green',
-    name: 'Xbox Carbon Green',
-    bgHex: 0xFF0A0E0C,
-    panelHex: 0xFF131B16,
-    primaryHex: 0xFF107C10,
-    accentHex: 0xFF00E676,
+  obsidian(
+    id: 'obsidian',
+    name: 'Obsidian Minimal',
+    bgHex: 0xFF0E0F12,
+    panelHex: 0xFF16181D,
+    primaryHex: 0xFF282D37,
+    accentHex: 0xFFE5E7EB,
   ),
-  cyberCyan(
-    id: 'cyber_cyan',
-    name: 'Cyberpunk Neon Cyan',
-    bgHex: 0xFF0B0E14,
-    panelHex: 0xFF141A24,
-    primaryHex: 0xFF00E5FF,
-    accentHex: 0xFFFF4081,
+  nordicSlate(
+    id: 'nordic_slate',
+    name: 'Nordic Steel',
+    bgHex: 0xFF0F1419,
+    panelHex: 0xFF171E26,
+    primaryHex: 0xFF263342,
+    accentHex: 0xFF60A5FA,
   ),
-  psBlue(
-    id: 'ps_blue',
-    name: 'PlayStation Astro Blue',
-    bgHex: 0xFF090D16,
-    panelHex: 0xFF12192B,
-    primaryHex: 0xFF0070D1,
-    accentHex: 0xFF5C9DFF,
+  graphiteAmber(
+    id: 'graphite_amber',
+    name: 'Graphite Warm',
+    bgHex: 0xFF111214,
+    panelHex: 0xFF191B1F,
+    primaryHex: 0xFF2E2920,
+    accentHex: 0xFFF59E0B,
   ),
-  crimsonRed(
-    id: 'crimson_red',
-    name: 'Crimson Elite Red',
-    bgHex: 0xFF12090B,
-    panelHex: 0xFF1F1115,
-    primaryHex: 0xFFFF1744,
-    accentHex: 0xFFFF9100,
+  oledMono(
+    id: 'oled_mono',
+    name: 'AMOLED Pure',
+    bgHex: 0xFF000000,
+    panelHex: 0xFF111114,
+    primaryHex: 0xFF26262B,
+    accentHex: 0xFFFFFFFF,
   );
 
   final String id;
@@ -59,17 +59,17 @@ enum DartPadThemePreset {
     for (final preset in DartPadThemePreset.values) {
       if (preset.id == id) return preset;
     }
-    return DartPadThemePreset.xboxGreen;
+    return DartPadThemePreset.obsidian;
   }
 }
 
 /// Application settings stored persistently in `DartPad/settings/app_settings.json`
 /// so all customizations and paired PC credentials survive phone/PC reboots.
 class DartPadAppSettings {
-  static const String appVersion = '0.2.0';
+  static const String appVersion = '0.3.0';
   static const String releaseDate = '2026-11-14';
   static const String releaseUrl =
-      'https://github.com/ferdlcx/konsol/releases/tag/v0.2.0';
+      'https://github.com/ferdlcx/konsol/releases/tag/v0.3.0';
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/ferdlcx/konsol/releases/latest';
 
@@ -95,10 +95,10 @@ class DartPadAppSettings {
     this.hapticFeedback = true,
     this.landscapeLock = true,
     this.keepScreenAwake = true,
-    this.themeId = 'xbox_green',
+    this.themeId = 'obsidian',
     this.globalScale = 1.0,
     this.activeProfileId = 'xbox_default',
-    this.activeLayoutId = 'xbox_authentic_v2',
+    this.activeLayoutId = 'xbox_authentic_v3',
     this.lastConnectedIp,
     this.lastConnectedPort = 42100,
     this.lastPairedPin,
@@ -160,6 +160,16 @@ class DartPadAppSettings {
       };
 
   factory DartPadAppSettings.fromJson(Map<String, dynamic> json) {
+    final rawLayout =
+        (json['activeLayoutId'] as String?) ?? 'xbox_authentic_v3';
+    final migratedLayout = rawLayout == 'xbox_authentic_v2'
+        ? 'xbox_authentic_v3'
+        : rawLayout;
+    final rawTheme = (json['themeId'] as String?) ?? 'obsidian';
+    final validTheme = DartPadThemePreset.values.any((t) => t.id == rawTheme)
+        ? rawTheme
+        : 'obsidian';
+
     return DartPadAppSettings(
       updateRateHz: (json['updateRateHz'] as int?) ?? 120,
       autoReconnect: (json['autoReconnect'] as bool?) ?? true,
@@ -167,12 +177,11 @@ class DartPadAppSettings {
       hapticFeedback: (json['hapticFeedback'] as bool?) ?? true,
       landscapeLock: (json['landscapeLock'] as bool?) ?? true,
       keepScreenAwake: (json['keepScreenAwake'] as bool?) ?? true,
-      themeId: (json['themeId'] as String?) ?? 'xbox_green',
+      themeId: validTheme,
       globalScale:
           ((json['globalScale'] as num?)?.toDouble() ?? 1.0).clamp(0.55, 1.65),
       activeProfileId: (json['activeProfileId'] as String?) ?? 'xbox_default',
-      activeLayoutId:
-          (json['activeLayoutId'] as String?) ?? 'xbox_authentic_v2',
+      activeLayoutId: migratedLayout,
       lastConnectedIp: json['lastConnectedIp'] as String?,
       lastConnectedPort: (json['lastConnectedPort'] as int?) ?? 42100,
       lastPairedPin: json['lastPairedPin'] as String?,
@@ -239,7 +248,7 @@ class DartPadConfigStore {
       }
 
       final landscapeFile =
-          File('${layoutsDir.path}/xbox_authentic_v2.json');
+          File('${layoutsDir.path}/xbox_authentic_v3.json');
       if (!await landscapeFile.exists()) {
         await saveLayout(ControllerLayout.defaultLandscape());
       }

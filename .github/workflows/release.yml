@@ -57,6 +57,18 @@ jobs:
         run: |
           dart compile exe apps/dartpad_receiver/bin/dartpad_receiver.dart -o DartPad.exe
 
+      - name: Build Official ViGEmClient.dll & Fetch Signed ViGEmBus Driver v1.22.0
+        run: |
+          git clone --depth 1 https://github.com/nefarius/ViGEmClient.git vigem_src
+          cmake -S vigem_src -B vigem_src/build -A x64 -DViGEmClient_DLL=ON
+          cmake --build vigem_src/build --config Release --target ViGEmClientShared
+          $dll = Get-ChildItem -Path vigem_src/build -Recurse -Filter "ViGEmClient.dll" | Select-Object -First 1
+          if (-not $dll) { throw "ViGEmClient.dll build failed" }
+          Copy-Item $dll.FullName .\ViGEmClient.dll -Force
+          Remove-Item -Recurse -Force vigem_src
+
+          Invoke-WebRequest -Uri "https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe" -OutFile ".\ViGEmBus_1.22.0_x64_x86_arm64.exe"
+
       - name: Verify DartPad.exe --self-test on Windows
         run: .\DartPad.exe --self-test
 
@@ -75,16 +87,18 @@ jobs:
           path: |
             release-output/DartPad-Setup.exe
             DartPad.exe
+            ViGEmClient.dll
 
       - name: Publish Windows Installer & Portable EXE to GitHub Release Immediately
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.2.0' }}
-          name: "DartPad ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.2.0' }} — Windows Installer (DartPad-Setup.exe), Portable EXE & Android APK"
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.0' }}
+          name: "DartPad ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.0' }} — Windows Installer (DartPad-Setup.exe), Portable EXE & Android APK"
           files: |
             release-output/DartPad-Setup.exe
             DartPad.exe
+            ViGEmClient.dll
 
   build-android:
     name: Build Android Controller (.apk)
@@ -117,8 +131,8 @@ jobs:
           python3 tool/patch_android_build.py
           flutter pub get
           flutter analyze
-          BUILD_NUMBER=$(( $(git rev-list --count HEAD) + 10 ))
-          flutter build apk --release --build-name=0.2.0 --build-number=$BUILD_NUMBER
+          BUILD_NUMBER=$(( $(git rev-list --count HEAD) + 20 ))
+          flutter build apk --release --build-name=0.3.0 --build-number=$BUILD_NUMBER
           cp build/app/outputs/flutter-apk/app-release.apk dartpad-mobile-android.apk
 
       - name: Upload Android APK Artifact
@@ -131,6 +145,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.2.0' }}
-          name: "DartPad ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.2.0' }} — Windows Installer (DartPad-Setup.exe), Portable EXE & Android APK"
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.0' }}
+          name: "DartPad ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.0' }} — Windows Installer (DartPad-Setup.exe), Portable EXE & Android APK"
           files: apps/dartpad_mobile/dartpad-mobile-android.apk

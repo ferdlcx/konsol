@@ -73,8 +73,8 @@ enum ControllerType {
           GamepadButton.start => 'Menu',
           GamepadButton.select => 'View',
           GamepadButton.guide => 'Xbox',
-          GamepadButton.leftStick => 'LS',
-          GamepadButton.rightStick => 'RS',
+          GamepadButton.leftStick => 'L3',
+          GamepadButton.rightStick => 'R3',
         };
       case ControllerType.playstation:
         return switch (button) {

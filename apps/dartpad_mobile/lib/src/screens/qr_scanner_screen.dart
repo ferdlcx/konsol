@@ -1,12 +1,13 @@
+import 'dart:async';
 import 'package:dartpad_protocol/dartpad_protocol.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-/// Full-screen Live Camera QR Code Scanner powered by Google ML Kit (`mobile_scanner`).
+/// Full-screen Live Camera QR Code Scanner powered by `mobile_scanner`.
 ///
-/// Prioritizes fast, one-shot scanning of the DartPad Windows Dashboard QR code
-/// (`dartpad://connect?ip=...&ips=...&port=...&pin=...`) with real-time error
-/// diagnostics and flashlight toggle.
+/// Uses lifecycle-safe initialization (`autoStart: false` + post-frame `start()`,
+/// `WidgetsBindingObserver`, and clean controller rebuild on retry) to prevent
+/// Android CameraX `genericError` race conditions during route transitions.
 class QrScannerScreen extends StatefulWidget {
   final MobileControllerEngine engine;
 
@@ -19,11 +20,10 @@ class QrScannerScreen extends StatefulWidget {
   State<QrScannerScreen> createState() => _QrScannerScreenState();
 }
 
-class _QrScannerScreenState extends State<QrScannerScreen> {
-  final MobileScannerController _scannerController = MobileScannerController(
-    detectionSpeed: DetectionSpeed.normal,
-    facing: CameraFacing.back,
-  );
+class _QrScannerScreenState extends State<QrScannerScreen>
+    with WidgetsBindingObserver {
+  MobileScannerController? _scannerController;
+  int _cameraEpoch = 0;
 
   bool _isConnecting = false;
   bool _torchOn = false;
@@ -31,9 +31,68 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
   String? _lastScannedRaw;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _createAndStartController();
+  }
+
+  void _createAndStartController() {
+    _scannerController?.dispose();
+    final ctrl = MobileScannerController(
+      autoStart: false,
+      detectionSpeed: DetectionSpeed.normal,
+      facing: CameraFacing.back,
+      formats: const [BarcodeFormat.qrCode],
+    );
+    _scannerController = ctrl;
+    _cameraEpoch++;
+
+    // Delay start until route transition & SurfaceView layout settle on Android
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future<void>.delayed(const Duration(milliseconds: 220));
+      if (!mounted || _scannerController != ctrl) return;
+      try {
+        await ctrl.start();
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _errorText = 'Kamera gagal memulai ($e). Tap "Muat Ulang Kamera".';
+        });
+      }
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final ctrl = _scannerController;
+    if (ctrl == null) return;
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      unawaited(ctrl.stop().catchError((_) {}));
+    } else if (state == AppLifecycleState.resumed) {
+      unawaited(ctrl.start().catchError((_) {}));
+    }
+  }
+
+  @override
   void dispose() {
-    _scannerController.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    final ctrl = _scannerController;
+    _scannerController = null;
+    if (ctrl != null) {
+      unawaited(ctrl.stop().catchError((_) {}).whenComplete(ctrl.dispose));
+    }
     super.dispose();
+  }
+
+  Future<void> _restartCamera() async {
+    setState(() {
+      _errorText = null;
+      _lastScannedRaw = null;
+      _torchOn = false;
+      _createAndStartController();
+    });
   }
 
   Future<void> _handleRawQr(String raw) async {
@@ -81,120 +140,170 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = widget.engine.settings.themePreset;
+    final ctrl = _scannerController;
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color(0xFF0E0F12),
       appBar: AppBar(
         backgroundColor: Color(theme.panelHex),
+        elevation: 0,
         title: const Text(
-          'Scan QR Code DartPad PC',
-          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+          'Scan QR DartPad PC',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+          ),
         ),
         actions: [
           IconButton(
-            tooltip: 'Lampu Flash',
+            tooltip: 'Muat Ulang Kamera',
+            icon: const Icon(Icons.refresh, color: Colors.white70),
+            onPressed: _restartCamera,
+          ),
+          IconButton(
+            tooltip: 'Flash',
             icon: Icon(
               _torchOn ? Icons.flash_on : Icons.flash_off,
               color: _torchOn ? Colors.amberAccent : Colors.white70,
             ),
-            onPressed: () async {
-              await _scannerController.toggleTorch();
-              setState(() => _torchOn = !_torchOn);
-            },
+            onPressed: ctrl == null
+                ? null
+                : () async {
+                    try {
+                      await ctrl.toggleTorch();
+                      if (mounted) setState(() => _torchOn = !_torchOn);
+                    } catch (_) {}
+                  },
           ),
           IconButton(
             tooltip: 'Putar Kamera',
             icon: const Icon(Icons.cameraswitch, color: Colors.white70),
-            onPressed: () => _scannerController.switchCamera(),
+            onPressed: ctrl == null
+                ? null
+                : () {
+                    unawaited(ctrl.switchCamera().catchError((_) {}));
+                  },
           ),
         ],
       ),
       body: Stack(
         children: [
-          MobileScanner(
-            controller: _scannerController,
-            onDetect: (capture) {
-              for (final barcode in capture.barcodes) {
-                final val = barcode.rawValue;
-                if (val != null && val.trim().startsWith('dartpad://')) {
-                  _handleRawQr(val);
-                  break;
+          if (ctrl != null)
+            MobileScanner(
+              key: ValueKey(_cameraEpoch),
+              controller: ctrl,
+              onDetect: (capture) {
+                for (final barcode in capture.barcodes) {
+                  final val = barcode.rawValue;
+                  if (val != null && val.trim().startsWith('dartpad://')) {
+                    _handleRawQr(val);
+                    break;
+                  }
                 }
-              }
-            },
-            errorBuilder: (context, error, child) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(
-                    'Kamera tidak dapat dibuka (${error.errorCode.name}). Pastikan izin Kamera diberikan untuk DartPad di Pengaturan Android.',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.amberAccent, fontSize: 14),
+              },
+              errorBuilder: (context, error, child) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.videocam_off_outlined,
+                          color: Colors.white54,
+                          size: 40,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Kamera belum siap (${error.errorCode.name}).\nPastikan izin Kamera aktif, lalu tekan tombol di bawah.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        OutlinedButton.icon(
+                          onPressed: _restartCamera,
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('Muat Ulang Kamera'),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              );
-            },
-          ),
+                );
+              },
+            ),
 
-          // Target Reticle Overlay
+          // Minimalist Reticle Frame
           Center(
             child: Container(
-              width: 240,
-              height: 240,
+              width: 230,
+              height: 230,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
+                borderRadius: BorderRadius.circular(14),
                 border: Border.all(
                   color: _isConnecting
                       ? Colors.amberAccent
-                      : Color(theme.accentHex),
-                  width: 3,
+                      : Colors.white.withValues(alpha: 0.7),
+                  width: 1.8,
                 ),
               ),
             ),
           ),
 
-          // Bottom Status & Diagnostic Overlay
+          // Bottom Minimalist Diagnostic Sheet
           Align(
             alignment: Alignment.bottomCenter,
             child: Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.84),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+                color: const Color(0xFF16181D).withValues(alpha: 0.94),
+                border: const Border(top: BorderSide(color: Color(0xFF252830))),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (_isConnecting) ...[
-                    CircularProgressIndicator(color: Color(theme.accentHex)),
+                    SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Color(theme.accentHex),
+                      ),
+                    ),
                     const SizedBox(height: 10),
                     const Text(
-                      'QR Terbaca! Sedang menyambungkan ke PC...',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      'Menghubungkan ke PC...',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
                     ),
                   ] else if (_errorText != null) ...[
                     Text(
                       _errorText!,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.amberAccent, fontSize: 13),
+                      style: const TextStyle(
+                        color: Color(0xFFFBBF24),
+                        fontSize: 12,
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    ElevatedButton.icon(
-                      onPressed: () {
-                        setState(() {
-                          _errorText = null;
-                          _lastScannedRaw = null;
-                        });
-                      },
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Scan Ulang QR'),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: _restartCamera,
+                      icon: const Icon(Icons.refresh, size: 16),
+                      label: const Text('Muat Ulang & Scan Lagi'),
                     ),
                   ] else ...[
                     const Text(
-                      'Arahkan kamera ke QR Code di jendela DartPad PC.\nQR URI (dartpad://connect?...) langsung dikenali otomatis.',
+                      'Arahkan kamera ke QR Code di jendela DartPad PC.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white70, fontSize: 13),
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
                     ),
                   ],
                 ],

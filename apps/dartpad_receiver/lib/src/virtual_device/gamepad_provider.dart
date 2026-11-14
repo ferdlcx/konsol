@@ -5,9 +5,14 @@ import 'package:dartpad_protocol/dartpad_protocol.dart';
 abstract class GamepadProvider {
   ControllerType get deviceType;
   bool get isInitialized;
+  bool get isHardwareDriverActive => false;
+  String get driverStatusSummary => isInitialized ? 'Simulation Active' : 'Inactive';
 
   /// Initializes the virtual controller device with the OS driver.
   bool init();
+
+  /// Switches virtual controller hardware identity (e.g. Xbox 360 <-> Sony DualShock 4) at runtime.
+  bool switchDeviceType(ControllerType nextType) => false;
 
   /// Pushes the latest [ControllerState] to the virtual gamepad device immediately.
   bool update(ControllerState state);
@@ -29,8 +34,7 @@ abstract class GamepadProvider {
 /// 2. Automated E2E tests or running the receiver when the Windows kernel driver
 ///    is not yet installed.
 class SimulatedGamepadProvider implements GamepadProvider {
-  @override
-  final ControllerType deviceType;
+  ControllerType _deviceType;
 
   bool _initialized = false;
   ControllerState _lastState = ControllerState.neutral;
@@ -40,12 +44,22 @@ class SimulatedGamepadProvider implements GamepadProvider {
   final void Function(ControllerState state)? onStateChanged;
 
   SimulatedGamepadProvider({
-    this.deviceType = ControllerType.xbox,
+    ControllerType deviceType = ControllerType.xbox,
     this.onStateChanged,
-  });
+  }) : _deviceType = deviceType;
+
+  @override
+  ControllerType get deviceType => _deviceType;
 
   @override
   bool get isInitialized => _initialized;
+
+  @override
+  bool get isHardwareDriverActive => false;
+
+  @override
+  String get driverStatusSummary =>
+      'Simulation (${_deviceType.name.toUpperCase()})';
 
   ControllerState get lastState => _lastState;
   int get updateCount => _updateCount;
@@ -67,6 +81,12 @@ class SimulatedGamepadProvider implements GamepadProvider {
   bool init() {
     _initialized = true;
     _lastState = ControllerState.neutral;
+    return true;
+  }
+
+  @override
+  bool switchDeviceType(ControllerType nextType) {
+    _deviceType = nextType;
     return true;
   }
 

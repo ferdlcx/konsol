@@ -75,6 +75,16 @@ class FfiGamepadProvider implements GamepadProvider {
   @override
   bool get isInitialized => _initialized;
 
+  @override
+  bool get isHardwareDriverActive => _initialized;
+
+  @override
+  String get driverStatusSummary =>
+      _initialized ? 'Native FFI (${deviceType.name.toUpperCase()})' : 'Inactive';
+
+  @override
+  bool switchDeviceType(ControllerType nextType) => nextType == deviceType;
+
   ControllerState get lastState => _lastState;
 
   static String defaultLibraryName() {

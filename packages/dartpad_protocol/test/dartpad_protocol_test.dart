@@ -259,14 +259,20 @@ void main() {
       expect(parsed.candidateIps, equals(['192.168.1.50', '192.168.42.10']));
     });
 
-    test('xbox_authentic_v2 layout enlarges LS, XYAB, and bumpers with zero element overlap across viewports', () {
+    test('xbox_authentic_v3 layout includes L3/R3, enlarges LS/XYAB/bumpers with zero element overlap across viewports', () {
       final layout = ControllerLayout.defaultLandscape(preset: ControllerType.xbox);
-      expect(layout.id, equals('xbox_authentic_v2'));
+      expect(layout.id, equals('xbox_authentic_v3'));
 
       final ls = layout.items.firstWhere((e) => e.id == 'left_stick');
+      final l3Btn = layout.items.firstWhere((e) => e.id == 'btn_l3');
+      final r3Btn = layout.items.firstWhere((e) => e.id == 'btn_r3');
       final aBtn = layout.items.firstWhere((e) => e.id == 'btn_south');
       final ltBtn = layout.items.firstWhere((e) => e.id == 'btn_lt');
       expect(ls.scale, greaterThanOrEqualTo(1.4));
+      expect(l3Btn.label, equals('L3'));
+      expect(r3Btn.label, equals('R3'));
+      expect(l3Btn.actions, equals(const [GamepadButton.leftStick]));
+      expect(r3Btn.actions, equals(const [GamepadButton.rightStick]));
       expect(aBtn.scale, greaterThanOrEqualTo(1.6));
       expect(ltBtn.scale, greaterThanOrEqualTo(1.4));
 
