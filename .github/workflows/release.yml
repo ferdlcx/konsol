@@ -149,7 +149,7 @@ jobs:
           flutter pub get
           flutter analyze
           BUILD_NUMBER=$(( $(git rev-list --count HEAD) + 20 ))
-          flutter build apk --release --build-name=0.3.2 --build-number=$BUILD_NUMBER
+          flutter build apk --release --build-name=0.3.3 --build-number=$BUILD_NUMBER
           cp build/app/outputs/flutter-apk/app-release.apk dartpad-mobile-android.apk
 
       - name: Upload Android APK Artifact
@@ -162,6 +162,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.2' }}
-          name: "DartPad ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.2' }} — Windows Installer (DartPad-Setup.exe), Portable EXE & Android APK"
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.3' }}
+          name: "DartPad ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.3.3' }} — Windows Installer (DartPad-Setup.exe), Portable EXE & Android APK"
           files: apps/dartpad_mobile/dartpad-mobile-android.apk

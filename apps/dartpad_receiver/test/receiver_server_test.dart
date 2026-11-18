@@ -487,7 +487,7 @@ void main() {
 
         expect(ok, isTrue);
         expect(mobileEngine.isConnected, isTrue);
-        expect(mobileEngine.transportMode, equals('TCP WebSocket'));
+        expect(mobileEngine.transportMode, anyOf(equals('TCP WebSocket'), equals('Dual UDP+TCP')));
         expect(mobileEngine.connectedServerName, equals('HybridFallback-PC'));
 
         // Send controller button & stick over WebSocket transport

@@ -1,6 +1,6 @@
 name: dartpad_mobile
 description: Customizable Android Virtual Gamepad Controller for Windows PC (Wi-Fi & USB).
-version: 0.3.2+5
+version: 0.3.3+6
 publish_to: none
 
 environment:

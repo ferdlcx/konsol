@@ -214,8 +214,7 @@ class EmbeddedDashboardGui {
         (dynamic message) {
           if (message is List<int>) {
             try {
-              final bytes =
-                  message is Uint8List ? message : Uint8List.fromList(message);
+              final bytes = Uint8List.fromList(message);
               final pkt = PacketCodec.decodeInput(bytes);
               receiverServer.handleExternalInputState(
                 pkt.state,
@@ -223,7 +222,7 @@ class EmbeddedDashboardGui {
                 clientAddress: remoteIp,
                 clientDeviceName: devName,
               );
-            } on FormatException {
+            } catch (_) {
               // Ignore malformed binary frame
             }
             return;

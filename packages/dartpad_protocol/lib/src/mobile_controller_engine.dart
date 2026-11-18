@@ -685,7 +685,7 @@ class MobileControllerEngine {
       _isConnected = true;
       _transportMode = 'UDP 120Hz';
       _lastConnectionError = null;
-      _savePairedSettings(payload);
+      await _savePairedSettings(payload);
 
       _sender = LowLatencyInputSender(
         socket: socket,
@@ -696,7 +696,7 @@ class MobileControllerEngine {
       )..startLoop();
 
       _heartbeatTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (_rttClock.elapsedMilliseconds - _lastAckTimeMs > 4000) {
+        if (_rttClock.elapsedMilliseconds - _lastAckTimeMs > 12000) {
           unawaited(disconnect(stopAutoPair: false));
           return;
         }
@@ -709,7 +709,9 @@ class MobileControllerEngine {
             timestampMs: _rttClock.elapsedMilliseconds,
           ),
         );
-        _socket?.send(hb, targetAddr, payload.port);
+        try {
+          _socket?.send(hb, targetAddr, payload.port);
+        } catch (_) {}
       });
 
       onConnectionChanged?.call(true, _lastRttMs);
@@ -728,16 +730,13 @@ class MobileControllerEngine {
     await _socketSub?.cancel();
     _socketSub = null;
     try {
-      // Send clean disconnect packet first if UDP was ignored on return path;
-      // HTTP /api/pair below will establish an authenticated WebSocket session cleanly.
       final wsOk = await _pairViaHttpAndAttachWebSocket(
         payload: payload,
         clientDeviceName: clientDeviceName,
         timeout: timeout,
+        retainedUdpSocket: socket,
       );
       if (wsOk) {
-        _socket?.close();
-        _socket = null;
         return true;
       }
     } catch (_) {}
@@ -765,6 +764,7 @@ class MobileControllerEngine {
     required PairingPayload payload,
     required String clientDeviceName,
     required Duration timeout,
+    RawDatagramSocket? retainedUdpSocket,
   }) async {
     final httpTimeout =
         timeout < const Duration(milliseconds: 900) ? timeout : const Duration(milliseconds: 1400);
@@ -802,6 +802,7 @@ class MobileControllerEngine {
         path: '/ws-control',
         queryParameters: {
           'token': token,
+          'pin': payload.pin,
           'name': clientDeviceName,
         },
       );
@@ -817,8 +818,22 @@ class MobileControllerEngine {
       _lastRttMs = pairSw.elapsedMilliseconds.toDouble();
       _lastAckTimeMs = _rttClock.elapsedMilliseconds;
       _isConnected = true;
-      _transportMode = 'TCP WebSocket';
+      _transportMode = retainedUdpSocket != null ? 'Dual UDP+TCP' : 'TCP WebSocket';
       _lastConnectionError = null;
+
+      if (retainedUdpSocket != null) {
+        _socket = retainedUdpSocket;
+        final targetAddr = InternetAddress.tryParse(payload.ip);
+        if (targetAddr != null) {
+          _sender = LowLatencyInputSender(
+            socket: retainedUdpSocket,
+            targetAddress: targetAddr,
+            targetPort: payload.port,
+            sessionToken: token,
+            updateRateHz: updateRateHz,
+          )..startLoop();
+        }
+      }
 
       _wsSub = ws.listen(
         (dynamic msg) {
@@ -857,7 +872,7 @@ class MobileControllerEngine {
         },
       );
 
-      _savePairedSettings(payload);
+      await _savePairedSettings(payload);
 
       // 60 Hz keep-alive & binary state sync over WebSocket so PC watchdog stays fed
       _wsSyncTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
@@ -865,7 +880,7 @@ class MobileControllerEngine {
       });
 
       _heartbeatTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (_rttClock.elapsedMilliseconds - _lastAckTimeMs > 4500) {
+        if (_rttClock.elapsedMilliseconds - _lastAckTimeMs > 12000) {
           unawaited(disconnect(stopAutoPair: false));
           return;
         }
@@ -888,14 +903,14 @@ class MobileControllerEngine {
     }
   }
 
-  void _savePairedSettings(PairingPayload payload) {
+  Future<void> _savePairedSettings(PairingPayload payload) async {
     _settings = _settings.copyWith(
       lastConnectedIp: payload.ip,
       lastConnectedPort: payload.port,
       lastPairedPin: payload.pin,
       lastPairedServerName: _connectedServerName ?? payload.deviceName,
     );
-    unawaited(configStore?.saveSettings(_settings) ?? Future.value());
+    await (configStore?.saveSettings(_settings) ?? Future.value());
   }
 
   void _sendWsState(ControllerState state) {
@@ -920,7 +935,8 @@ class MobileControllerEngine {
   void _flushTransportState({required bool immediate}) {
     if (_sender != null) {
       _sender!.updateState(_currentState, immediate: immediate);
-    } else if (_wsControl != null && immediate) {
+    }
+    if (_wsControl != null && immediate) {
       _sendWsState(_currentState);
     }
   }
@@ -1064,6 +1080,9 @@ class MobileControllerEngine {
     _transportMode = 'Disconnected';
     _sessionToken = null;
     onConnectionChanged?.call(false, 0.0);
+    if (!stopAutoPair && _settings.autoPairEnabled) {
+      startAutoConnectLoop();
+    }
   }
 
   void _recomputeButtonsAndFlush({required bool immediate}) {

@@ -108,17 +108,19 @@ class LowLatencyInputSender {
   }
 
   void _flushCurrentState() {
-    _sequence = (_sequence + 1) & 0xFFFFFFFF;
-    final packet = InputPacket(
-      sequence: _sequence,
-      timestampMs: _clock.elapsedMilliseconds,
-      state: _currentState,
-      flags: sessionFlag,
-    );
+    try {
+      _sequence = (_sequence + 1) & 0xFFFFFFFF;
+      final packet = InputPacket(
+        sequence: _sequence,
+        timestampMs: _clock.elapsedMilliseconds,
+        state: _currentState,
+        flags: sessionFlag,
+      );
 
-    PacketCodec.encodeInputInto(packet, _reusableByteData);
-    socket.send(_reusableBuffer, targetAddress, targetPort);
-    _packetsSent++;
+      PacketCodec.encodeInputInto(packet, _reusableByteData);
+      socket.send(_reusableBuffer, targetAddress, targetPort);
+      _packetsSent++;
+    } catch (_) {}
   }
 }
 
