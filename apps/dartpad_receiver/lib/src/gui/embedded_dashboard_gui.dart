@@ -346,6 +346,15 @@ class EmbeddedDashboardGui {
       return;
     }
 
+    if (path == '/api/ping') {
+      await _writeJson(req, {
+        'ok': true,
+        'ts': DateTime.now().millisecondsSinceEpoch,
+        'connected': receiverServer.isClientConnected,
+      });
+      return;
+    }
+
     if (path == '/api/rumble' && req.method == 'POST') {
       final sent = receiverServer.sendRumbleToClient(
         const RumbleEvent(largeMotor: 0.90, smallMotor: 0.70, durationMs: 250),

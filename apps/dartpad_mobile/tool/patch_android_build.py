@@ -67,6 +67,13 @@ def patch_manifest(app_dir: pathlib.Path, manifest_path: pathlib.Path) -> None:
         </provider>"""
         manifest = manifest.replace("</application>", provider_block + "\n    </application>", 1)
 
+    if "com.google.mlkit.vision.DEPENDENCIES" not in manifest:
+        mlkit_meta = """
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode_ui" />"""
+        manifest = manifest.replace("</application>", mlkit_meta + "\n    </application>", 1)
+
     xml_dir = app_dir / "android/app/src/main/res/xml"
     xml_dir.mkdir(parents=True, exist_ok=True)
     filepaths_xml = xml_dir / "filepaths.xml"
@@ -86,11 +93,23 @@ def patch_gradle(app_dir: pathlib.Path, keystore_abs: str) -> None:
     kts_path = app_dir / "android/app/build.gradle.kts"
     groovy_path = app_dir / "android/app/build.gradle"
 
+    proguard_path = app_dir / "android/app/proguard-rules.pro"
+    proguard_path.write_text(
+        "-keep class com.google.mlkit.** { *; }\n"
+        "-keep class com.google.android.gms.internal.mlkit_vision_barcode.** { *; }\n"
+        "-keep class androidx.camera.** { *; }\n"
+        "-keep class dev.steenbakker.mobile_scanner.** { *; }\n"
+        "-dontwarn com.google.mlkit.**\n"
+        "-dontwarn androidx.camera.**\n",
+        encoding="utf-8",
+    )
+    print(f"Wrote {proguard_path}")
+
     if kts_path.exists():
         g = kts_path.read_text(encoding="utf-8")
         g = re.sub(
             r"minSdk\s*=\s*flutter\.minSdkVersion",
-            "minSdk = maxOf(flutter.minSdkVersion, 21)",
+            "minSdk = maxOf(flutter.minSdkVersion, 23)",
             g,
         )
 
@@ -119,6 +138,14 @@ def patch_gradle(app_dir: pathlib.Path, keystore_abs: str) -> None:
                 )
             else:
                 g += '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n}\n'
+
+        if "play-services-code-scanner" not in g:
+            g = re.sub(
+                r"(dependencies\s*\{)",
+                r'\1\n    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")',
+                g,
+                count=1,
+            )
 
         if not re.search(r"signingConfigs\s*\{", g):
             signing_block = (
@@ -156,18 +183,25 @@ def patch_gradle(app_dir: pathlib.Path, keystore_abs: str) -> None:
                 g,
                 count=1,
             )
+        if "proguard-rules.pro" not in g:
+            g = re.sub(
+                r'((?:getByName\("release"\)|release)\s*\{)',
+                r'\1\n            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")',
+                g,
+                count=1,
+            )
         kts_path.write_text(g, encoding="utf-8")
         print(f"Patched {kts_path}")
     elif groovy_path.exists():
         g = groovy_path.read_text(encoding="utf-8")
         g = re.sub(
             r"minSdkVersion\s+flutter\.minSdkVersion",
-            "minSdkVersion Math.max(flutter.minSdkVersion, 21)",
+            "minSdkVersion Math.max(flutter.minSdkVersion, 23)",
             g,
         )
         g = re.sub(
             r"minSdk\s*=\s*flutter\.minSdkVersion",
-            "minSdk = Math.max(flutter.minSdkVersion, 21)",
+            "minSdk = Math.max(flutter.minSdkVersion, 23)",
             g,
         )
         if "coreLibraryDesugaringEnabled" not in g:
@@ -195,6 +229,14 @@ def patch_gradle(app_dir: pathlib.Path, keystore_abs: str) -> None:
             else:
                 g += "\ndependencies {\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'\n}\n"
 
+        if "play-services-code-scanner" not in g:
+            g = re.sub(
+                r"(dependencies\s*\{)",
+                r"\1\n    implementation 'com.google.android.gms:play-services-code-scanner:16.1.0'",
+                g,
+                count=1,
+            )
+
         if not re.search(r"signingConfigs\s*\{", g):
             signing_block = (
                 "    signingConfigs {\n"
@@ -219,6 +261,63 @@ def patch_gradle(app_dir: pathlib.Path, keystore_abs: str) -> None:
         print(f"Patched {groovy_path}")
 
 
+def patch_main_activity(app_dir: pathlib.Path) -> None:
+    kt_candidates = list((app_dir / "android/app/src/main/kotlin").rglob("MainActivity.kt"))
+    if not kt_candidates:
+        print("Warning: MainActivity.kt not found; skipping Google Code Scanner MethodChannel patch.")
+        return
+    kt_path = kt_candidates[0]
+    existing = kt_path.read_text(encoding="utf-8")
+    pkg_match = re.search(r"^package\s+([^\s]+)", existing, flags=re.M)
+    pkg_line = f"package {pkg_match.group(1)}" if pkg_match else "package com.ferdlcx.dartpad.dartpad_mobile"
+
+    kt_code = f"""{pkg_line}
+
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+
+class MainActivity : FlutterActivity() {{
+    private val channelName = "com.ferdlcx.dartpad/google_qr"
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {{
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+            .setMethodCallHandler {{ call, result ->
+                if (call.method == "scanQr") {{
+                    try {{
+                        val options = GmsBarcodeScannerOptions.Builder()
+                            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                            .enableAutoZoom()
+                            .build()
+                        val scanner = GmsBarcodeScanning.getClient(this, options)
+                        scanner.startScan()
+                            .addOnSuccessListener {{ barcode ->
+                                result.success(barcode.rawValue)
+                            }}
+                            .addOnCanceledListener {{
+                                result.success(null)
+                            }}
+                            .addOnFailureListener {{ e ->
+                                result.error("GOOGLE_SCAN_ERROR", e.message ?: "Scanner gagal", null)
+                            }}
+                    }} catch (e: Exception) {{
+                        result.error("GOOGLE_SCAN_ERROR", e.message ?: "Scanner gagal", null)
+                    }}
+                }} else {{
+                    result.notImplemented()
+                }}
+            }}
+    }}
+}}
+"""
+    kt_path.write_text(kt_code, encoding="utf-8")
+    print(f"Patched {kt_path} with Google Code Scanner MethodChannel")
+
+
 def main() -> None:
     app_dir = pathlib.Path.cwd()
     manifest_path = app_dir / "android/app/src/main/AndroidManifest.xml"
@@ -227,6 +326,7 @@ def main() -> None:
         raise FileNotFoundError(f"Missing {manifest_path}")
     patch_manifest(app_dir, manifest_path)
     patch_gradle(app_dir, keystore_abs)
+    patch_main_activity(app_dir)
 
 
 if __name__ == "__main__":

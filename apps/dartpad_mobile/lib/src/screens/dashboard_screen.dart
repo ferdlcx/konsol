@@ -136,7 +136,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  static const MethodChannel _googleQrChannel =
+      MethodChannel('com.ferdlcx.dartpad/google_qr');
+
   Future<void> _openQrCameraScanner() async {
+    // Primary: Google Play Services Code Scanner (zero CameraX genericError, auto-zoom!)
+    if (Platform.isAndroid) {
+      try {
+        final raw = await _googleQrChannel.invokeMethod<String>('scanQr');
+        if (!mounted) return;
+        if (raw == null || raw.trim().isEmpty) {
+          // User canceled Google scanner cleanly
+          return;
+        }
+        await _connectFromScannedRaw(raw.trim());
+        return;
+      } on PlatformException {
+        // Google Play Services scanner unavailable -> fall back to in-app camera scanner
+      } on MissingPluginException {
+        // Fallback to in-app camera scanner
+      }
+    }
+
+    if (!mounted) return;
     final ok = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => QrScannerScreen(engine: widget.engine),
@@ -148,6 +170,62 @@ class _DashboardScreenState extends State<DashboardScreen> {
         'Terhubung ke ${widget.engine.connectedServerName} (${widget.engine.connectedServerIp}) via Scan QR.',
       );
       setState(() {});
+    }
+  }
+
+  Future<void> _connectFromScannedRaw(String trimmed) async {
+    setState(() => _isConnecting = true);
+    _setFeedback('QR terbaca! Menyambungkan ke PC...', showSnack: false);
+    try {
+      bool ok = false;
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        final uri = Uri.tryParse(trimmed);
+        final pin = uri?.queryParameters['pin']?.trim() ?? '';
+        if (uri != null && uri.host.isNotEmpty && pin.isNotEmpty) {
+          ok = await widget.engine.connectWithPayload(
+            PairingPayload(
+              ip: uri.host,
+              port: DartPadProtocolConstants.defaultPort,
+              httpPort: uri.port > 0 ? uri.port : 42101,
+              pin: pin,
+              deviceName: 'Windows PC',
+            ),
+            timeout: const Duration(seconds: 4),
+          );
+        } else {
+          throw const FormatException('QR URL tidak berisi IP PC dan PIN.');
+        }
+      } else {
+        ok = await widget.engine.connectFromQrUri(
+          trimmed,
+          timeout: const Duration(seconds: 4),
+        );
+      }
+      if (!mounted) return;
+      setState(() => _isConnecting = false);
+      if (ok) {
+        _ipController.text =
+            widget.engine.connectedServerIp ?? _ipController.text;
+        _pinController.text =
+            widget.engine.settings.lastPairedPin ?? _pinController.text;
+        _setFeedback(
+          'Terhubung ke ${widget.engine.connectedServerName} (${widget.engine.connectedServerIp}) via Google QR!',
+        );
+      } else {
+        _setFeedback(
+          widget.engine.lastConnectionError ??
+              'Gagal terhubung ke PC dari QR Code ini.',
+          isError: true,
+        );
+      }
+    } on FormatException catch (e) {
+      if (!mounted) return;
+      setState(() => _isConnecting = false);
+      _setFeedback('Format QR tidak valid: ${e.message}', isError: true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isConnecting = false);
+      _setFeedback('Kesalahan koneksi QR: $e', isError: true);
     }
   }
 

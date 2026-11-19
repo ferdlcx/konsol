@@ -2,15 +2,15 @@
 
 **DartPad** mengubah smartphone Android menjadi virtual gamepad **Xbox 360** atau **PlayStation (DualShock 4)** untuk Windows 10/11 melalui **Wi-Fi** maupun **USB Tethering**, dengan latensi sangat rendah (`120 Hz` + *Instant Edge-Triggered Dispatch `0 ms`*).
 
-## 📥 Download Rilis Terbaru (`v0.3.3`) — Real-time Dual-Pipeline (UDP + TCP WebSocket) & Anti-Disconnect
+## 📥 Download Rilis Terbaru (`v0.3.4`) — Google Play QR Scanner, Admin Firewall Installer, & 3-Tier Fail-Safe
 
-* **Halaman GitHub Release**: [https://github.com/ferdlcx/konsol/releases/tag/v0.3.3](https://github.com/ferdlcx/konsol/releases/tag/v0.3.3)
-* **💿 Windows PC Setup Installer (PALING DIREKOMENDASIKAN — Otomatis Pasang Driver ViGEmBus, `ViGEmClient.dll`, Shortcut, & Firewall Rule UDP `42100` / TCP `42101`)**:
-  [Download `DartPad-Setup.exe`](https://github.com/ferdlcx/konsol/releases/download/v0.3.3/DartPad-Setup.exe)
-* **💻 Windows PC Portable Single Launcher (`1 File .exe` Tanpa Blink CMD + 1-Klik Pemasang ViGEmBus di Dashboard)**:
-  [Download `DartPad.exe`](https://github.com/ferdlcx/konsol/releases/download/v0.3.3/DartPad.exe)
-* **📱 Android Mobile Controller (`.apk` — Dual-Pipeline UDP 120Hz + TCP WebSocket, Anti 1Hz Stall, Orientasi Aman & Update In-App OTA)**:
-  [Download `dartpad-mobile-android.apk`](https://github.com/ferdlcx/konsol/releases/download/v0.3.3/dartpad-mobile-android.apk)
+* **Halaman GitHub Release**: [https://github.com/ferdlcx/konsol/releases/tag/v0.3.4](https://github.com/ferdlcx/konsol/releases/tag/v0.3.4)
+* **💿 Windows PC Setup Installer (WAJIB UNTUK FIREWALL & DRIVER — Otomatis Pasang Driver ViGEmBus, `ViGEmClient.dll`, & Izin Firewall Admin UDP `42100` / TCP `42101`)**:
+  [Download `DartPad-Setup.exe`](https://github.com/ferdlcx/konsol/releases/download/v0.3.4/DartPad-Setup.exe)
+* **💻 Windows PC Portable Single Launcher (`1 File .exe` Tanpa Blink CMD)**:
+  [Download `DartPad.exe`](https://github.com/ferdlcx/konsol/releases/download/v0.3.4/DartPad.exe)
+* **📱 Android Mobile Controller (`.apk` — Google Code Scanner Anti-`genericError`, 3-Tier UDP+TCP+HTTP Fail-Safe, & Update In-App OTA)**:
+  [Download `dartpad-mobile-android.apk`](https://github.com/ferdlcx/konsol/releases/download/v0.3.4/dartpad-mobile-android.apk)
 * **🌐 Metode Alternatif Tanpa Install APK (Browser Touch Gamepad)**:
   Buka **`http://<IP_PC>:42101/pad`** langsung dari Google Chrome HP (atau scan tab **QR Web Controller** di Dashboard PC dengan Google Lens / Kamera bawaan HP).
 

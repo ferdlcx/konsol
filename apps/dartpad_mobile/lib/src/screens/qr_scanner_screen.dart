@@ -233,7 +233,7 @@ class _QrScannerScreenState extends State<QrScannerScreen>
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'Kamera belum siap (${error.errorCode.name}).\nPastikan izin Kamera aktif, lalu tap Muat Ulang.\n\nAlternatif cepat: buka http://<IP_PC>:42101/pad di Google Chrome HP.',
+                          'Kamera belum siap (${error.errorCode.name}${error.errorDetails?.message != null ? ": ${error.errorDetails!.message}" : ""}).\nPastikan izin Kamera aktif, lalu tap Muat Ulang.\n\nAlternatif cepat: buka http://<IP_PC>:42101/pad di Google Chrome HP.',
                           textAlign: TextAlign.center,
                           style: const TextStyle(
                             color: Colors.white70,

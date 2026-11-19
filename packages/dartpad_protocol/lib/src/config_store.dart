@@ -66,10 +66,10 @@ enum DartPadThemePreset {
 /// Application settings stored persistently in `DartPad/settings/app_settings.json`
 /// so all customizations and paired PC credentials survive phone/PC reboots.
 class DartPadAppSettings {
-  static const String appVersion = '0.3.3';
-  static const String releaseDate = '2026-11-14';
+  static const String appVersion = '0.3.4';
+  static const String releaseDate = '2026-11-19';
   static const String releaseUrl =
-      'https://github.com/ferdlcx/konsol/releases/tag/v0.3.3';
+      'https://github.com/ferdlcx/konsol/releases/tag/v0.3.4';
   static const String latestReleaseApiUrl =
       'https://api.github.com/repos/ferdlcx/konsol/releases/latest';
 

@@ -2,7 +2,7 @@
 ; Produces a single, one-click Windows Setup Wizard: DartPad-Setup.exe
 
 #define MyAppName "DartPad Receiver"
-#define MyAppVersion "0.3.3"
+#define MyAppVersion "0.3.4"
 #define MyAppPublisher "ferdlcx"
 #define MyAppURL "https://github.com/ferdlcx/konsol"
 #define MyAppExeName "DartPad.exe"
@@ -18,8 +18,8 @@ AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={autopf}\DartPad
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-; Install for current user by default (can overwrite existing DartPad.exe cleanly!)
-PrivilegesRequired=lowest
+; Request admin elevation so ViGEmBus driver & Windows Firewall rules (UDP 42100 / TCP 42101) always succeed!
+PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=..\..\..\release-output
 OutputBaseFilename=DartPad-Setup

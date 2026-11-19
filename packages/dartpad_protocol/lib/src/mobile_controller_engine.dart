@@ -671,9 +671,9 @@ class MobileControllerEngine {
       }
     });
 
-    final udpWindow = timeout < const Duration(milliseconds: 520)
+    final udpWindow = timeout < const Duration(milliseconds: 650)
         ? timeout
-        : const Duration(milliseconds: 520);
+        : const Duration(milliseconds: 650);
     final udpAccepted = await handshakeCompleter.future.timeout(
       udpWindow,
       onTimeout: () => false,
@@ -724,7 +724,7 @@ class MobileControllerEngine {
       return false;
     }
 
-    // Phase 2: Hybrid TCP HTTP (/api/pair) + WebSocket (/ws-control) fallback!
+    // Phase 2: Hybrid TCP HTTP (/api/pair) + WebSocket (/ws-control) + Tier 3 HTTP+UDP fallback!
     // Solves asymmetric/one-way UDP where PC turned green on connect packet
     // but return UDP accept never reached the phone.
     await _socketSub?.cancel();
@@ -741,7 +741,8 @@ class MobileControllerEngine {
       }
     } catch (_) {}
 
-    // If neither UDP nor TCP succeeded, notify PC to drop any partial green indicator
+    // If all transports failed, notify PC twice with a short flush so PC never
+    // stays stuck showing a false green "Terhubung" badge!
     try {
       final disc = PacketCodec.encodeControl(
         ControlPacket(
@@ -751,6 +752,9 @@ class MobileControllerEngine {
         ),
       );
       socket.send(disc, targetAddr, payload.port);
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      socket.send(disc, targetAddr, payload.port);
+      await Future<void>.delayed(const Duration(milliseconds: 15));
     } catch (_) {}
 
     await disconnect(stopAutoPair: false);
@@ -766,8 +770,9 @@ class MobileControllerEngine {
     required Duration timeout,
     RawDatagramSocket? retainedUdpSocket,
   }) async {
-    final httpTimeout =
-        timeout < const Duration(milliseconds: 900) ? timeout : const Duration(milliseconds: 1400);
+    final httpTimeout = timeout < const Duration(milliseconds: 1200)
+        ? timeout
+        : const Duration(milliseconds: 2500);
     final client = HttpClient()..connectionTimeout = httpTimeout;
     try {
       final pairSw = Stopwatch()..start();
@@ -782,7 +787,11 @@ class MobileControllerEngine {
         }),
       );
       final resp = await req.close().timeout(httpTimeout);
-      if (resp.statusCode != 200) return false;
+      if (resp.statusCode != 200) {
+        _lastConnectionError =
+            'PC menolak HTTP /api/pair (HTTP ${resp.statusCode}).';
+        return false;
+      }
 
       final body = await resp.transform(utf8.decoder).join();
       final json = jsonDecode(body) as Map<String, dynamic>;
@@ -795,6 +804,13 @@ class MobileControllerEngine {
       final token = json['sessionToken']?.toString();
       if (token == null || token.isEmpty) return false;
 
+      _sessionToken = token;
+      _connectedServerName =
+          json['serverName']?.toString() ?? payload.deviceName;
+      _connectedServerIp = payload.ip;
+      _lastRttMs = pairSw.elapsedMilliseconds.toDouble();
+      _lastAckTimeMs = _rttClock.elapsedMilliseconds;
+
       final wsUri = Uri(
         scheme: 'ws',
         host: payload.ip,
@@ -806,19 +822,24 @@ class MobileControllerEngine {
           'name': clientDeviceName,
         },
       );
-      final ws = await WebSocket.connect(wsUri.toString()).timeout(httpTimeout);
+
+      WebSocket? ws;
+      try {
+        ws = await WebSocket.connect(wsUri.toString()).timeout(httpTimeout);
+      } catch (_) {
+        ws = null;
+      }
+
+      if (ws == null && retainedUdpSocket == null) {
+        _lastConnectionError =
+            'HTTP /api/pair berhasil, namun WebSocket ke ${payload.ip}:${payload.httpPort} gagal.';
+        return false;
+      }
+
       _wsControl = ws;
       _wsSequence = 0;
       _wsPacketsSent = 0;
-
-      _sessionToken = token;
-      _connectedServerName =
-          json['serverName']?.toString() ?? payload.deviceName;
-      _connectedServerIp = payload.ip;
-      _lastRttMs = pairSw.elapsedMilliseconds.toDouble();
-      _lastAckTimeMs = _rttClock.elapsedMilliseconds;
       _isConnected = true;
-      _transportMode = retainedUdpSocket != null ? 'Dual UDP+TCP' : 'TCP WebSocket';
       _lastConnectionError = null;
 
       if (retainedUdpSocket != null) {
@@ -835,71 +856,113 @@ class MobileControllerEngine {
         }
       }
 
-      _wsSub = ws.listen(
-        (dynamic msg) {
-          if (msg is! String) return;
-          try {
-            final data = jsonDecode(msg) as Map<String, dynamic>;
-            final mType = data['type']?.toString();
-            if (mType == 'pong') {
-              _lastAckTimeMs = _rttClock.elapsedMilliseconds;
-              final ts = (data['ts'] as num?)?.toInt() ?? 0;
-              final diff = _rttClock.elapsedMilliseconds - ts;
-              if (diff >= 0 && diff < 10000) {
-                _lastRttMs = diff.toDouble();
-                onConnectionChanged?.call(_isConnected, _lastRttMs);
+      if (ws != null) {
+        _transportMode =
+            retainedUdpSocket != null ? 'Dual UDP+TCP' : 'TCP WebSocket';
+        _wsSub = ws.listen(
+          (dynamic msg) {
+            if (msg is! String) return;
+            try {
+              final data = jsonDecode(msg) as Map<String, dynamic>;
+              final mType = data['type']?.toString();
+              if (mType == 'pong') {
+                _lastAckTimeMs = _rttClock.elapsedMilliseconds;
+                final ts = (data['ts'] as num?)?.toInt() ?? 0;
+                final diff = _rttClock.elapsedMilliseconds - ts;
+                if (diff >= 0 && diff < 10000) {
+                  _lastRttMs = diff.toDouble();
+                  onConnectionChanged?.call(_isConnected, _lastRttMs);
+                }
+              } else if (mType == 'rumble') {
+                final rumble = RumbleEvent(
+                  largeMotor: (data['large'] as num?)?.toDouble() ?? 0.0,
+                  smallMotor: (data['small'] as num?)?.toDouble() ?? 0.0,
+                  durationMs: (data['durationMs'] as num?)?.toInt() ?? 80,
+                );
+                _lastRumble = rumble;
+                onRumbleReceived?.call(rumble);
               }
-            } else if (mType == 'rumble') {
-              final rumble = RumbleEvent(
-                largeMotor: (data['large'] as num?)?.toDouble() ?? 0.0,
-                smallMotor: (data['small'] as num?)?.toDouble() ?? 0.0,
-                durationMs: (data['durationMs'] as num?)?.toInt() ?? 80,
-              );
-              _lastRumble = rumble;
-              onRumbleReceived?.call(rumble);
+            } catch (_) {}
+          },
+          onDone: () {
+            if (_wsControl == ws && _isConnected) {
+              unawaited(disconnect(stopAutoPair: false));
             }
+          },
+          onError: (_) {
+            if (_wsControl == ws && _isConnected) {
+              unawaited(disconnect(stopAutoPair: false));
+            }
+          },
+        );
+
+        // 60 Hz keep-alive & binary state sync over WebSocket so PC watchdog stays fed
+        _wsSyncTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
+          _sendWsState(_currentState);
+        });
+
+        _heartbeatTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+          if (_rttClock.elapsedMilliseconds - _lastAckTimeMs > 12000) {
+            unawaited(disconnect(stopAutoPair: false));
+            return;
+          }
+          try {
+            _wsControl?.add(
+              jsonEncode({
+                'type': 'ping',
+                'ts': _rttClock.elapsedMilliseconds,
+              }),
+            );
           } catch (_) {}
-        },
-        onDone: () {
-          if (_wsControl == ws && _isConnected) {
+        });
+      } else {
+        // Tier 3: HTTP-paired + 120Hz UDP streaming + HTTP /api/ping keep-alive
+        _transportMode = 'HTTP+UDP 120Hz';
+        _heartbeatTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+          if (_rttClock.elapsedMilliseconds - _lastAckTimeMs > 14000) {
             unawaited(disconnect(stopAutoPair: false));
+            return;
           }
-        },
-        onError: (_) {
-          if (_wsControl == ws && _isConnected) {
-            unawaited(disconnect(stopAutoPair: false));
-          }
-        },
-      );
+          unawaited(_sendHttpPing(payload.ip, payload.httpPort));
+        });
+      }
 
       await _savePairedSettings(payload);
-
-      // 60 Hz keep-alive & binary state sync over WebSocket so PC watchdog stays fed
-      _wsSyncTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
-        _sendWsState(_currentState);
-      });
-
-      _heartbeatTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (_rttClock.elapsedMilliseconds - _lastAckTimeMs > 12000) {
-          unawaited(disconnect(stopAutoPair: false));
-          return;
-        }
-        try {
-          _wsControl?.add(
-            jsonEncode({
-              'type': 'ping',
-              'ts': _rttClock.elapsedMilliseconds,
-            }),
-          );
-        } catch (_) {}
-      });
-
       onConnectionChanged?.call(true, _lastRttMs);
       return true;
-    } catch (_) {
+    } on SocketException catch (e) {
+      _lastConnectionError =
+          'Gagal hubungi ${payload.ip}:${payload.httpPort} (${e.message}). Klik "Izinkan Firewall" di Dashboard DartPad PC (TCP 42101 & UDP 42100).';
+      return false;
+    } on TimeoutException {
+      _lastConnectionError =
+          'Timeout ke ${payload.ip} (UDP:${payload.port} & HTTP:${payload.httpPort}). Klik "Izinkan Firewall" di Dashboard DartPad PC & pastikan 1 jaringan.';
+      return false;
+    } catch (e) {
+      _lastConnectionError = 'Gagal pairing HTTP ke ${payload.ip}:${payload.httpPort}: $e';
       return false;
     } finally {
       client.close(force: true);
+    }
+  }
+
+  Future<void> _sendHttpPing(String ip, int httpPort) async {
+    final c = HttpClient()..connectionTimeout = const Duration(milliseconds: 1500);
+    try {
+      final sw = Stopwatch()..start();
+      final req = await c
+          .getUrl(Uri.parse('http://$ip:$httpPort/api/ping'))
+          .timeout(const Duration(milliseconds: 1500));
+      final resp = await req.close().timeout(const Duration(milliseconds: 1500));
+      await resp.drain<void>();
+      if (resp.statusCode == 200) {
+        _lastAckTimeMs = _rttClock.elapsedMilliseconds;
+        _lastRttMs = sw.elapsedMilliseconds.toDouble();
+        onConnectionChanged?.call(_isConnected, _lastRttMs);
+      }
+    } catch (_) {
+    } finally {
+      c.close(force: true);
     }
   }
 
